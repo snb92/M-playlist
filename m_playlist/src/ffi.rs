@@ -53,6 +53,10 @@ fn get_state() -> &'static Mutex<EngineState> {
 
 #[no_mangle]
 pub extern "C" fn mplaylist_init() -> bool {
+    // Elevate the Windows system timer resolution to 1 millisecond.
+    // Without this, std::thread::sleep(1ms) will actually sleep for 15.6ms!
+    unsafe { windows::Win32::Media::timeBeginPeriod(1); }
+    
     unsafe { windows::Win32::Media::MediaFoundation::MFStartup(windows::Win32::Media::MediaFoundation::MF_VERSION, 0).ok(); }
     
     let mut state = get_state().lock().unwrap();
@@ -94,6 +98,7 @@ pub extern "C" fn mplaylist_shutdown() {
     state.app_logic = None; 
     state.wasapi = None; 
     unsafe { windows::Win32::Media::MediaFoundation::MFShutdown().ok(); }
+    unsafe { windows::Win32::Media::timeEndPeriod(1); }
 }
 
 #[no_mangle]
