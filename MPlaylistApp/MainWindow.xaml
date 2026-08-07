@@ -34,6 +34,51 @@
                 </StackPanel>
 
                 <CheckBox x:Name="NdiBroadcastCheckBox" Content="Enable NDI Broadcast" Foreground="White" HorizontalAlignment="Center" Margin="0,0,0,10" Checked="NdiBroadcastCheckBox_Checked" Unchecked="NdiBroadcastCheckBox_Unchecked"/>
+
+                <!-- Output Corner Pinning -->
+                <TextBlock Text="Output Corner Pinning" Foreground="Gray" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,5,0,5"/>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="35"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+                        <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="TL X" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                    <Slider x:Name="SliderTLX" Grid.Row="0" Grid.Column="1" Minimum="-2" Maximum="2" Value="-1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
+                    <TextBlock x:Name="LblTLX" Grid.Row="0" Grid.Column="2" Text="-1.00" Foreground="Gray" VerticalAlignment="Center"/>
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="TL Y" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                    <Slider x:Name="SliderTLY" Grid.Row="1" Grid.Column="1" Minimum="-2" Maximum="2" Value="1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
+                    <TextBlock x:Name="LblTLY" Grid.Row="1" Grid.Column="2" Text="1.00" Foreground="Gray" VerticalAlignment="Center"/>
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="TR X" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                    <Slider x:Name="SliderTRX" Grid.Row="2" Grid.Column="1" Minimum="-2" Maximum="2" Value="1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
+                    <TextBlock x:Name="LblTRX" Grid.Row="2" Grid.Column="2" Text="1.00" Foreground="Gray" VerticalAlignment="Center"/>
+
+                    <TextBlock Grid.Row="3" Grid.Column="0" Text="TR Y" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                    <Slider x:Name="SliderTRY" Grid.Row="3" Grid.Column="1" Minimum="-2" Maximum="2" Value="1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
+                    <TextBlock x:Name="LblTRY" Grid.Row="3" Grid.Column="2" Text="1.00" Foreground="Gray" VerticalAlignment="Center"/>
+
+                    <TextBlock Grid.Row="4" Grid.Column="0" Text="BL X" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                    <Slider x:Name="SliderBLX" Grid.Row="4" Grid.Column="1" Minimum="-2" Maximum="2" Value="-1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
+                    <TextBlock x:Name="LblBLX" Grid.Row="4" Grid.Column="2" Text="-1.00" Foreground="Gray" VerticalAlignment="Center"/>
+
+                    <TextBlock Grid.Row="5" Grid.Column="0" Text="BL Y" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                    <Slider x:Name="SliderBLY" Grid.Row="5" Grid.Column="1" Minimum="-2" Maximum="2" Value="-1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
+                    <TextBlock x:Name="LblBLY" Grid.Row="5" Grid.Column="2" Text="-1.00" Foreground="Gray" VerticalAlignment="Center"/>
+
+                    <TextBlock Grid.Row="6" Grid.Column="0" Text="BR X" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                    <Slider x:Name="SliderBRX" Grid.Row="6" Grid.Column="1" Minimum="-2" Maximum="2" Value="1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
+                    <TextBlock x:Name="LblBRX" Grid.Row="6" Grid.Column="2" Text="1.00" Foreground="Gray" VerticalAlignment="Center"/>
+
+                    <TextBlock Grid.Row="7" Grid.Column="0" Text="BR Y" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                    <Slider x:Name="SliderBRY" Grid.Row="7" Grid.Column="1" Minimum="-2" Maximum="2" Value="-1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
+                    <TextBlock x:Name="LblBRY" Grid.Row="7" Grid.Column="2" Text="-1.00" Foreground="Gray" VerticalAlignment="Center"/>
+                </Grid>
             </StackPanel>
 
             <!-- Playlist -->

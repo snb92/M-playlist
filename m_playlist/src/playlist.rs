@@ -119,7 +119,7 @@ impl Playlist {
         }
     }
 
-    pub fn tick(&mut self, clock: &MasterClock, blend_factor: &std::sync::atomic::AtomicU32, graphics: &Dx11Compositor) {
+    pub fn tick(&mut self, clock: &MasterClock, blend_factor: &std::sync::atomic::AtomicU32, graphics: &Dx11Compositor, geometry: &[[f32; 4]; 4]) {
         if self.is_transitioning {
             let elapsed = clock.get_time_seconds() - self.transition_start_time;
             let duration = self.transition_duration_hnsecs as f64 / 10_000_000.0;
@@ -154,7 +154,7 @@ impl Playlist {
         // UNCONDITIONALLY RENDER IF ACTIVE
         if self.deck_a.is_some() || self.deck_b.is_some() {
             let blend = f32::from_bits(blend_factor.load(std::sync::atomic::Ordering::Acquire));
-            if let Err(e) = graphics.render_composited(blend) {
+            if let Err(e) = graphics.render_composited(blend, geometry) {
                 eprintln!("M-Playlist [RENDER ERROR]: Failed to render composited: {:?}", e);
             }
         }

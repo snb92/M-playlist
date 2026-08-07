@@ -20,8 +20,20 @@ namespace MPlaylistApp
         {
             InitializeComponent();
             PlaylistUI.ItemsSource = _playlist;
+            _playlist.CollectionChanged += Playlist_CollectionChanged;
             this.Loaded += MainWindow_Loaded;
             this.Closed += MainWindow_Closed;
+        }
+
+        private void Playlist_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        {
+            if (e.OldItems != null)
+            {
+                foreach (CueModel oldCue in e.OldItems)
+                {
+                    oldCue.Dispose();
+                }
+            }
         }
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -175,6 +187,10 @@ namespace MPlaylistApp
 
         private void MainWindow_Closed(object? sender, EventArgs e)
         {
+            // 3.5 Dispose FileSystemWatchers
+            foreach (var cue in _playlist) { cue.Dispose(); }
+            _playlist.Clear();
+
             // 4. Safely kill the WASAPI and MF threads
             EngineInterop.mplaylist_shutdown();
         }
@@ -206,6 +222,30 @@ namespace MPlaylistApp
         private void NdiBroadcastCheckBox_Unchecked(object sender, RoutedEventArgs e)
         {
             EngineInterop.mplaylist_set_ndi_output(0);
+        }
+
+        private void OnCornerSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            // WPF fires ValueChanged during InitializeComponent before all controls exist
+            if (!IsLoaded) return;
+
+            // Update labels
+            LblTLX.Text = $"{SliderTLX.Value:F2}";
+            LblTLY.Text = $"{SliderTLY.Value:F2}";
+            LblTRX.Text = $"{SliderTRX.Value:F2}";
+            LblTRY.Text = $"{SliderTRY.Value:F2}";
+            LblBLX.Text = $"{SliderBLX.Value:F2}";
+            LblBLY.Text = $"{SliderBLY.Value:F2}";
+            LblBRX.Text = $"{SliderBRX.Value:F2}";
+            LblBRY.Text = $"{SliderBRY.Value:F2}";
+
+            // Push all 8 values to the Rust engine
+            EngineInterop.mplaylist_set_geometry(
+                (float)SliderTLX.Value, (float)SliderTLY.Value,
+                (float)SliderTRX.Value, (float)SliderTRY.Value,
+                (float)SliderBLX.Value, (float)SliderBLY.Value,
+                (float)SliderBRX.Value, (float)SliderBRY.Value
+            );
         }
     }
 }

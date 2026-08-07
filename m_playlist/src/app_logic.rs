@@ -24,6 +24,7 @@ pub enum EngineCommand {
     SetAudioDevice(u32),
     Scrub(i64),
     SetNdiOutput(bool),
+    SetGeometry([f32; 8]),
     Resize(u32, u32),
     Shutdown,
 }
@@ -50,6 +51,12 @@ impl AppLogic {
             println!("M-Playlist [LOGIC]: App Logic Loop Started.");
 
             let frame_duration = std::time::Duration::from_nanos(16_666_666);
+            let mut geometry_state: [[f32; 4]; 4] = [
+                [-1.0, 1.0, 0.0, 0.0],  // top_left
+                [ 1.0, 1.0, 0.0, 0.0],  // top_right
+                [-1.0,-1.0, 0.0, 0.0],  // bottom_left
+                [ 1.0,-1.0, 0.0, 0.0],  // bottom_right
+            ];
             
             // Unified Broadcast Game Loop
             loop {
@@ -90,6 +97,14 @@ impl AppLogic {
                                 println!("M-Playlist [LOGIC]: NDI Output disabled.");
                             }
                         }
+                        EngineCommand::SetGeometry(c) => {
+                            geometry_state = [
+                                [c[0], c[1], 0.0, 0.0],
+                                [c[2], c[3], 0.0, 0.0],
+                                [c[4], c[5], 0.0, 0.0],
+                                [c[6], c[7], 0.0, 0.0],
+                            ];
+                        }
                         EngineCommand::Resize(w, h) => {
                             if let Err(e) = graphics.resize(w, h) {
                                 eprintln!("M-Playlist [RENDER ERROR]: Resize failed! {:?}", e);
@@ -105,7 +120,7 @@ impl AppLogic {
                 }
                 
                 // 2. Unconditionally tick and render at 60Hz
-                playlist.tick(&clock, &blend_factor, &graphics);
+                playlist.tick(&clock, &blend_factor, &graphics, &geometry_state);
                 
                 // 3. Sleep for the remainder of the 16.6ms window
                 let elapsed = start_time.elapsed();

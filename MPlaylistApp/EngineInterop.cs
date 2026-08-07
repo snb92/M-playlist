@@ -110,5 +110,13 @@ namespace MPlaylistApp
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void mplaylist_resize_swapchain(uint width, uint height);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void mplaylist_set_geometry(
+            float tl_x, float tl_y,
+            float tr_x, float tr_y,
+            float bl_x, float bl_y,
+            float br_x, float br_y
+        );
     }
 }

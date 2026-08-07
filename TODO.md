@@ -50,3 +50,4 @@
 ### Phase 4: Broadcast Capabilities
 - [x] Crossfades & Shaders (A/B Deck Compositor)
 - [ ] NDI Broadcast Output
+  - [ ] Implement format-conversion compute shader before readback (10-bit R10G10B10A2 -> 8-bit BGRA)

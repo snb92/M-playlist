@@ -9,7 +9,7 @@ use windows::Win32::Graphics::Direct3D::{
 };
 use windows::Win32::Graphics::Direct3D::Fxc::D3DCompile;
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_SHADER_RESOURCE,
+    D3D11CreateDevice, D3D11_BIND_CONSTANT_BUFFER,
     D3D11_BUFFER_DESC, D3D11_CPU_ACCESS_WRITE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
     D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_FILTER_MIN_MAG_MIP_LINEAR,
     D3D11_MAPPED_SUBRESOURCE, D3D11_MAP_WRITE_DISCARD, D3D11_SAMPLER_DESC,
@@ -18,7 +18,6 @@ use windows::Win32::Graphics::Direct3D11::{
     ID3D11Buffer, ID3D11Device, ID3D11DeviceContext, ID3D11Multithread,
     ID3D11PixelShader, ID3D11Resource, ID3D11SamplerState, ID3D11ShaderResourceView,
     ID3D11Texture2D, ID3D11VertexShader,
-    D3D11_BIND_RENDER_TARGET,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
@@ -35,7 +34,7 @@ struct VS_OUT { float4 pos : SV_POSITION; float2 uv : TEXCOORD; };
 VS_OUT VS_Main(uint id : SV_VertexID) {
     VS_OUT output;
     output.uv = float2((id << 1) & 2, id & 2);
-    output.pos = float4(output.uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+    output.pos = float4(output.uv * float2(2, -2) + float2(-1, 1), 0, 1);
     return output;
 }
 \0";
@@ -45,30 +44,25 @@ struct VS_OUT { float4 pos : SV_POSITION; float2 uv : TEXCOORD; };
 Texture2D texA : register(t0);
 Texture2D texB : register(t1);
 SamplerState smp : register(s0);
-cbuffer BlendBuffer : register(b0) { float blendFactor; float aspectA; float aspectB; float aspectOut; };
-
-float2 adjust_uv(float2 uv, float texAspect) {
-    if (texAspect <= 0.0) return uv;
-    float2 new_uv = uv;
-    if (texAspect > aspectOut) { // Letterbox
-        float ratio = aspectOut / texAspect;
-        new_uv.y = (uv.y - 0.5) / ratio + 0.5;
-        if (new_uv.y < 0.0 || new_uv.y > 1.0) return float2(-1.0, -1.0);
-    } else { // Pillarbox
-        float ratio = texAspect / aspectOut;
-        new_uv.x = (uv.x - 0.5) / ratio + 0.5;
-        if (new_uv.x < 0.0 || new_uv.x > 1.0) return float2(-1.0, -1.0);
-    }
-    return new_uv;
-}
+cbuffer BlendBuffer : register(b0) { 
+    float blendFactor; float aspectA; float aspectB; float aspectOut; 
+    float4x4 invHomography;
+};
 
 float4 PS_Main(VS_OUT input) : SV_TARGET {
-    float2 uvA = adjust_uv(input.uv, aspectA);
-    float2 uvB = adjust_uv(input.uv, aspectB);
+    // 1. Multiply the screen UV by the inverse 3D matrix
+    float3 uvw = mul(float3(input.uv, 1.0), (float3x3)invHomography);
     
-    float4 colorA = (uvA.x < 0.0) ? float4(0,0,0,1) : texA.Sample(smp, uvA);
-    float4 colorB = (uvB.x < 0.0) ? float4(0,0,0,1) : texB.Sample(smp, uvB);
+    // 2. Perform the true Perspective Divide
+    float2 final_uv = uvw.xy / uvw.z;
     
+    // 3. Render black outside the bounds of the warped quad
+    if (final_uv.x < 0.0 || final_uv.x > 1.0 || final_uv.y < 0.0 || final_uv.y > 1.0) {
+        return float4(0, 0, 0, 1);
+    }
+    
+    float4 colorA = texA.Sample(smp, final_uv);
+    float4 colorB = texB.Sample(smp, final_uv);
     return lerp(colorA, colorB, blendFactor);
 }
 \0";
@@ -79,6 +73,58 @@ pub struct BlendData {
     pub aspect_a: f32,
     pub aspect_b: f32,
     pub aspect_out: f32,
+    pub inv_homography: [f32; 16],
+}
+
+fn calculate_inverse_homography(geometry: &[[f32; 4]; 4]) -> [f32; 16] {
+    // Map NDC (-1 to 1) to UV Space (0 to 1)
+    let map_x = |x: f32| (x + 1.0) / 2.0;
+    let map_y = |y: f32| (1.0 - y) / 2.0;
+
+    let x0 = map_x(geometry[0][0]); let y0 = map_y(geometry[0][1]); // TL
+    let x1 = map_x(geometry[1][0]); let y1 = map_y(geometry[1][1]); // TR
+    let x2 = map_x(geometry[3][0]); let y2 = map_y(geometry[3][1]); // BR (Cyclic order)
+    let x3 = map_x(geometry[2][0]); let y3 = map_y(geometry[2][1]); // BL (Cyclic order)
+
+    let dx1 = x1 - x2; 
+    let dx2 = x3 - x2; 
+    let sx = x0 - x1 + x2 - x3;
+    
+    let dy1 = y1 - y2; 
+    let dy2 = y3 - y2; 
+    let sy = y0 - y1 + y2 - y3;
+
+    let det = dx1 * dy2 - dy1 * dx2;
+    let (g, h) = if det.abs() < 0.0001 {
+        (0.0, 0.0)
+    } else {
+        ((sx * dy2 - sy * dx2) / det, (sy * dx1 - sx * dy1) / det)
+    };
+
+    let a = x1 - x0 + g * x1;
+    let b = x3 - x0 + h * x3;
+    let c = x0;
+    let d = y1 - y0 + g * y1;
+    let e = y3 - y0 + h * y3;
+    let f = y0;
+
+    // Adjugate matrix (Inverse)
+    let inv_a = e - f * h;
+    let inv_b = c * h - b;
+    let inv_c = b * f - c * e;
+    let inv_d = f * g - d;
+    let inv_e = a - c * g;
+    let inv_f = c * d - a * f;
+    let inv_g = d * h - e * g;
+    let inv_h = b * g - a * h;
+    let inv_i = a * e - b * d;
+
+    [
+        inv_a, inv_d, inv_g, 0.0,
+        inv_b, inv_e, inv_h, 0.0,
+        inv_c, inv_f, inv_i, 0.0,
+        0.0,   0.0,   0.0,   1.0,
+    ]
 }
 
 pub struct SendableSample(pub windows::Win32::Media::MediaFoundation::IMFSample);
@@ -280,13 +326,16 @@ impl Dx11Compositor {
         }
     }
 
-    pub fn render_composited(&self, blend_factor: f32) -> Result<()> {
+    pub fn render_composited(&self, blend_factor: f32, geometry: &[[f32; 4]; 4]) -> Result<()> {
         unsafe {
             let backbuffer: ID3D11Texture2D = self.swapchain.GetBuffer(0)?;
             let mut rtv_opt: Option<windows::Win32::Graphics::Direct3D11::ID3D11RenderTargetView> = None;
             let dest_res: ID3D11Resource = backbuffer.cast()?;
             self.device.CreateRenderTargetView(&dest_res, None, Some(&mut rtv_opt))?;
             let rtv = rtv_opt.unwrap();
+            
+            let clear_color: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+            self.context.ClearRenderTargetView(&rtv, &clear_color);
             
             let current_w = self.width.load(Ordering::Acquire);
             let current_h = self.height.load(Ordering::Acquire);
@@ -303,7 +352,7 @@ impl Dx11Compositor {
             
             self.context.OMSetRenderTargets(Some(&[Some(rtv)]), None);
 
-            self.context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            self.context.IASetPrimitiveTopology(windows::Win32::Graphics::Direct3D::D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             self.context.VSSetShader(&self.vertex_shader, None);
             self.context.PSSetShader(&self.pixel_shader, None);
             self.context.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
@@ -326,12 +375,16 @@ impl Dx11Compositor {
             let aspect_b = get_aspect(&*lock_b);
             let aspect_out = if current_h > 0 { current_w as f32 / current_h as f32 } else { 1.0 };
 
-            let blend_data = BlendData { blend_factor, aspect_a, aspect_b, aspect_out };
+            let blend_data = BlendData {
+                blend_factor, aspect_a, aspect_b, aspect_out,
+                inv_homography: calculate_inverse_homography(geometry),
+            };
             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
             self.context.Map(&self.constant_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped))?;
             std::ptr::copy_nonoverlapping(&blend_data as *const _ as *const u8, mapped.pData as *mut u8, std::mem::size_of::<BlendData>());
             self.context.Unmap(&self.constant_buffer, 0);
             
+            self.context.VSSetConstantBuffers(0, Some(&[Some(self.constant_buffer.clone())]));
             self.context.PSSetConstantBuffers(0, Some(&[Some(self.constant_buffer.clone())]));
 
             let create_srv = |tex_opt: &Option<(ID3D11Texture2D, u32, SendableSample)>| -> Result<Option<ID3D11ShaderResourceView>> {

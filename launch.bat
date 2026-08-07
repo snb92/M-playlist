@@ -16,6 +16,8 @@ if %ERRORLEVEL% neq 0 (
 
 echo.
 echo [1.5/2] Deploying Engine DLL...
+if not exist "..\MPlaylistApp\bin\Debug\net8.0-windows\" mkdir "..\MPlaylistApp\bin\Debug\net8.0-windows\"
+if not exist "..\MPlaylistApp\bin\Release\net8.0-windows\" mkdir "..\MPlaylistApp\bin\Release\net8.0-windows\"
 copy /Y target\release\m_playlist.dll ..\MPlaylistApp\bin\Debug\net8.0-windows\m_playlist.dll >nul
 copy /Y target\release\m_playlist.dll ..\MPlaylistApp\bin\Release\net8.0-windows\m_playlist.dll >nul
 

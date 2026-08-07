@@ -83,6 +83,15 @@ This file contains a timestamped log of all findings, decisions, validations, an
 - **RESOLUTION:** Successfully implemented stack-based dual-deck PCM audio mixing and HLSL `lerp` video compositing. Protected concurrent GPU access by enabling `ID3D11Multithread` protection.
 
 ## [2026-08-07] (Phase 4B: Temporal State Machine)
+- **FINDING / DECISION:** Extracted the `SubresourceIndex` from the `IMFDXGIBuffer` and passed it into the DX11 Shader Resource View to ensure we render the exact slice the decoder just wrote.
+- **IMPACT:** Even with Zero-Copy active, frames played severely out of order (e.g. Frame 6, then 3, then 7) because we dropped the `IMFSample` too early, causing Media Foundation to overwrite the active slice we were looking at!
+- **RESOLUTION:** Forcibly held the `IMFSample` COM object alive inside the graphics `Mutex` until the *next* frame is processed, preventing the hardware decoder from recycling and overwriting the slice.
+
+### A/V Sync Microstutter (Windows Timer Resolution)
+- **FINDING / DECISION:** The A/V Sync Gate uses `std::thread::sleep(Duration::from_millis(1))` to precisely hold a frame until its scheduled timecode. However, Windows defaults to a 15.6ms timer resolution, causing the 1ms sleep to overshoot by 14.6ms.
+- **IMPACT:** Frames missed their V-Sync deadline by a full 60Hz cycle, resulting in a perceptible "millisecond pause" or micro-stutter every time the sleep overshot.
+- **RESOLUTION:** Injected `timeBeginPeriod(1)` at engine startup to force the Windows OS into a high-precision 1ms timer mode, ensuring the Sync Gate wakes up on time. Restored via `timeEndPeriod(1)` on shutdown.
+
 - **FINDING / DECISION:** Delegated the crossfade math and VRAM memory cleanup entirely to the `AppLogic` thread using a 60Hz `recv_timeout` tick loop.
 - **IMPACT:** Solved the "Threading Trap". If the math or cleanup was handled by the WASAPI loop or the Media Engine decoder loop, it would cause fatal race conditions or violate the lock-free audio mandate.
 - **RESOLUTION:** The `AppLogic` thread now recalculates the `blend_factor` smoothly over time based on the active Master Clock and gracefully drops the outgoing deck's `Option<MediaEngine>` to immediately reclaim GPU VRAM.
@@ -124,3 +133,34 @@ This file contains a timestamped log of all findings, decisions, validations, an
 - **RESOLUTION:** Removed the `has_started = false` overwrite. Instead, mathematically re-aligned `start_time_offset` backwards by the exact scrub delta, keeping the monotonic Master Clock pure and preventing the thread from hanging.
 - **FINDING / DECISION (Slow Decoder Protection):** Even with hardware acceleration, extremely complex 120FPS 4K codecs could occasionally fall behind real-time. The AppLogic loop would stall trying to render delayed frames.
 - **RESOLUTION:** Added a strict Frame Drop failsafe in `media_engine.rs`. If a decoded frame arrives >50ms late relative to the calibrated audio clock, it is instantly discarded before it hits the D3D11 texture, ensuring real-time playback speed is preserved at the cost of dropped visual frames (standard media player behavior).
+
+## [2026-08-07] (Senior Architect Review — Feature Triage)
+- **DECISION:** Feature D (Automagic File Tracking) is VETOED for the Rust backend. Rule 3 violation (no third-party crates). Architecture violation: C# is the Brain, Rust is the Muscle. C# will use native `System.IO.FileSystemWatcher` and send `mplaylist_load_cue` commands via FFI.
+- **DECISION:** Feature A (10-Bit HDR) is DEFERRED. Changing the SwapChain to `R10G10B10A2_UNORM` breaks the NDI Staging Ring Buffer because `CopyResource` requires identical source/destination formats. Requires a custom down-sampling compute/pixel shader pass first.
+- **DECISION:** Feature C (LTC Timecode Chase) is DEFERRED. External clock slaving risks WASAPI starvation/overflow from drift, requiring a custom pitch/time resampler (violates zero-dependency rule).
+- **DECISION:** Feature B (Corner Pinning) is AUTHORIZED. Safe extension of the existing HLSL architecture. Standard sliders first; visual canvas is a day-2 frontend task.
+
+## [2026-08-07] (Feature B: Corner Pinning Geometry — Implementation)
+- **FINDING / DECISION:** Implemented 4-corner projection mapping via HLSL constant buffer expansion and Triangle Strip topology.
+- **IMPACT:** Enables real-time geometric warping of the DX11 output for projection mapping scenarios. Zero regression to existing A/B blending and letterboxing pipelines.
+- **RESOLUTION:** Expanded `BlendData` with 4×`[f32;4]` corner fields (16-byte aligned). Replaced oversized triangle VS_CODE with 4-vertex Triangle Strip reading corners from cbuffer. Added `VSSetConstantBuffers` binding. Changed `Draw(3,0)` → `Draw(4,0)`. Routed `mplaylist_set_geometry` FFI through `SetGeometry` mpsc command to `AppLogic` geometry state. Added 8 WPF sliders (range -2.0 to 2.0) with real-time `ValueChanged` wiring.
+
+## [2026-08-07] (Hotfix: Corner Pinning VRAM Smearing)
+- **FINDING / DECISION:** Identified a "Hall of Mirrors" smearing effect when the video quad was warped inward via Corner Pinning. The background was retaining ghost pixels from previous frames because `render_composited` was overdrawing without a clear pass.
+- **IMPACT:** Severe visual artifacts on exposed background pixels when adjusting projection mapping.
+- **RESOLUTION:** Added an explicit `ClearRenderTargetView` call with a pure black clear color (`[0.0, 0.0, 0.0, 1.0]`) directly after RTV creation, ensuring a pristine slate before the Triangle Strip is drawn.
+
+## [2026-08-07] (Architectural Upgrade: True 3D Perspective Projection)
+- **FINDING / DECISION:** Identified that a standard affine Triangle Strip causes a "Perspective Divide" fold across the quad when corners are moved independently, ruining projection mapping accuracy.
+- **IMPACT:** Transitioned the projection model from affine vertex manipulation to a true 3D planar homography solved on the CPU and executed per-pixel on the GPU.
+- **RESOLUTION:** Reverted the Vertex Shader to an oversized Triangle `Draw(3,0)` rendering a full-screen canvas. Implemented an Adjugate Matrix (Inverse Homography) calculation on the Rust `AppLogic` thread to solve the cyclic convex quadrilateral projection. Passed this $4 \times 4$ matrix via the `BlendBuffer` into the Pixel Shader, where `final_uv = uvw.xy / uvw.z` performs a mathematically perfect 3D perspective divide, eliminating the affine fold entirely.
+
+## [2026-08-07] (Feature D: Automagic File Tracking Architecture)
+- **FINDING / DECISION:** Implemented Zero-Trust File Tracking exclusively within the C# Macro-State, fully isolating the Rust muscle from file system IO and retaining its strict adherence to Rule 3 (no third-party crates like `notify`).
+- **IMPACT:** Enables silent, automatic hot-swapping of media files if external changes (e.g., render overwrites) occur on disk, without causing synchronization freezes.
+- **RESOLUTION:** Bound a `System.IO.FileSystemWatcher` into the MVVM `CueModel`. Dispatched file events (Changed, Created, Renamed, Deleted) across thread boundaries via `System.Windows.Application.Current.Dispatcher.Invoke` to fire `EngineInterop.LoadCueToEngine`, silently hot-swapping the active Rust media source. Hooked `_playlist.CollectionChanged` to properly invoke `IDisposable` memory management on removed cues, preventing background handle leaks.
+
+## [2026-08-07] (Hotfix: FileSystemWatcher E_ACCESSDENIED Debounce)
+- **FINDING / DECISION:** Discovered a fatal asynchronous race condition. When an external program overwrites a media file, the OS locks the file for writing. `FileSystemWatcher` instantly fires its event, commanding Rust to read the file, which crashes `MFCreateSourceReaderFromURL` with `E_ACCESSDENIED`.
+- **IMPACT:** Re-exporting media from Adobe Premiere or After Effects crashed the live broadcast engine.
+- **RESOLUTION:** Implemented an asynchronous lock-check polling gate (`IsFileLocked` with `FileShare.None`) in `CueModel.cs`. The C# brain now safely loops `Task.Delay(500)` on the background thread until the external renderer releases the OS lock, before seamlessly vaulting to the UI thread to command the Rust hot-swap.

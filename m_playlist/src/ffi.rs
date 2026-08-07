@@ -261,9 +261,9 @@ pub extern "C" fn mplaylist_get_audio_device_name(index: u32, buffer: *mut u8, m
                         };
                         if let Ok(prop_var) = store.GetValue(&pkey) {
                             if prop_var.Anonymous.Anonymous.vt == windows::Win32::System::Variant::VT_LPWSTR {
-                                let pwstr = unsafe { prop_var.Anonymous.Anonymous.Anonymous.pwszVal };
+                                let pwstr = prop_var.Anonymous.Anonymous.Anonymous.pwszVal;
                                 if !pwstr.is_null() {
-                                    let name_str = unsafe { pwstr.to_string().unwrap_or_default() };
+                                    let name_str = pwstr.to_string().unwrap_or_default();
                                     let bytes = name_str.as_bytes();
                                     let copy_len = std::cmp::min(bytes.len(), (max_len - 1) as usize);
                                     std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, copy_len);
@@ -295,5 +295,20 @@ pub extern "C" fn mplaylist_resize_swapchain(width: u32, height: u32) {
     let state = get_state().lock().unwrap();
     if let Some(logic) = state.app_logic.as_ref() {
         let _ = logic.tx.send(EngineCommand::Resize(width, height));
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn mplaylist_set_geometry(
+    tl_x: f32, tl_y: f32,
+    tr_x: f32, tr_y: f32,
+    bl_x: f32, bl_y: f32,
+    br_x: f32, br_y: f32,
+) {
+    let state = get_state().lock().unwrap();
+    if let Some(logic) = state.app_logic.as_ref() {
+        let _ = logic.tx.send(EngineCommand::SetGeometry([
+            tl_x, tl_y, tr_x, tr_y, bl_x, bl_y, br_x, br_y,
+        ]));
     }
 }
