@@ -29,22 +29,7 @@ namespace MPlaylistApp
             _videoSurface = new VideoHwndHost();
             VideoContainer.Child = _videoSurface;
             VideoContainer.SizeChanged += (s, args) => {
-                if (_videoSurface != null && VideoContainer.ActualWidth > 0 && VideoContainer.ActualHeight > 0) {
-                    var presentationSource = PresentationSource.FromVisual(this);
-                    double dpiX = 1.0;
-                    double dpiY = 1.0;
-                    
-                    if (presentationSource != null && presentationSource.CompositionTarget != null) {
-                        dpiX = presentationSource.CompositionTarget.TransformToDevice.M11;
-                        dpiY = presentationSource.CompositionTarget.TransformToDevice.M22;
-                    }
-                    
-                    int physicalWidth = (int)(VideoContainer.ActualWidth * dpiX);
-                    int physicalHeight = (int)(VideoContainer.ActualHeight * dpiY);
-                    
-                    _videoSurface.ResizeHwnd(physicalWidth, physicalHeight);
-                    EngineInterop.mplaylist_resize_swapchain((uint)physicalWidth, (uint)physicalHeight);
-                }
+                TriggerVideoResize();
             };
 
             var audioDevices = EngineInterop.GetAudioDevices();
@@ -83,6 +68,29 @@ namespace MPlaylistApp
                 {
                     StatusText.Text = "FATAL: DXGI Compositor Failed.";
                 }
+                
+                // FORCE an initial resize now that DXGI is bound!
+                TriggerVideoResize();
+            }
+        }
+
+        private void TriggerVideoResize()
+        {
+            if (_videoSurface != null && VideoContainer.ActualWidth > 0 && VideoContainer.ActualHeight > 0) {
+                var presentationSource = PresentationSource.FromVisual(this);
+                double dpiX = 1.0;
+                double dpiY = 1.0;
+                
+                if (presentationSource != null && presentationSource.CompositionTarget != null) {
+                    dpiX = presentationSource.CompositionTarget.TransformToDevice.M11;
+                    dpiY = presentationSource.CompositionTarget.TransformToDevice.M22;
+                }
+                
+                int physicalWidth = (int)(VideoContainer.ActualWidth * dpiX);
+                int physicalHeight = (int)(VideoContainer.ActualHeight * dpiY);
+                
+                _videoSurface.ResizeHwnd(physicalWidth, physicalHeight);
+                EngineInterop.mplaylist_resize_swapchain((uint)physicalWidth, (uint)physicalHeight);
             }
         }
 

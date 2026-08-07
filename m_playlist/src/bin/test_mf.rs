@@ -2,7 +2,7 @@ use std::os::windows::ffi::OsStrExt;
 use windows::core::{ComInterface, PCWSTR};
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED, CoUninitialize};
 use windows::Win32::Media::MediaFoundation::{
-    MFStartup, MFShutdown, MFCreateSourceReaderFromURL, IMFSourceReader, IMFDXGIDeviceManager, MFCreateDXGIDeviceManager,
+    MFStartup, MFShutdown, MFCreateSourceReaderFromURL, IMFDXGIDeviceManager, MFCreateDXGIDeviceManager,
     MFCreateAttributes, IMFAttributes, MF_SOURCE_READER_D3D_MANAGER, MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING,
     MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, MF_VERSION
 };
