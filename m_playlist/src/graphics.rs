@@ -260,43 +260,11 @@ impl Dx11Compositor {
     }
 
     pub fn update_deck_texture(&self, deck_id: u8, src_texture: &ID3D11Texture2D) -> Result<()> {
-        unsafe {
-            let mut desc = D3D11_TEXTURE2D_DESC::default();
-            src_texture.GetDesc(&mut desc);
-
-            let staging_mutex = if deck_id == 0 { &self.staging_a } else { &self.staging_b };
-            let mut staging_lock = staging_mutex.lock().unwrap();
-
-            let needs_new_texture = match staging_lock.as_ref() {
-                Some(t) => {
-                    let mut curr_desc = D3D11_TEXTURE2D_DESC::default();
-                    t.GetDesc(&mut curr_desc);
-                    curr_desc.Width != desc.Width || curr_desc.Height != desc.Height
-                }
-                None => true,
-            };
-
-            if needs_new_texture {
-                let new_desc = D3D11_TEXTURE2D_DESC {
-                    Width: desc.Width,
-                    Height: desc.Height,
-                    MipLevels: 1,
-                    ArraySize: 1,
-                    Format: desc.Format,
-                    SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                    Usage: windows::Win32::Graphics::Direct3D11::D3D11_USAGE_DEFAULT,
-                    BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32 | D3D11_BIND_RENDER_TARGET.0 as u32,
-                    ..Default::default()
-                };
-                let mut new_tex_opt: Option<ID3D11Texture2D> = None;
-                self.device.CreateTexture2D(&new_desc, None, Some(&mut new_tex_opt))?;
-                *staging_lock = Some(new_tex_opt.unwrap());
-            }
-
-            let staging_tex = staging_lock.as_ref().unwrap();
-            let dest_res: ID3D11Resource = staging_tex.cast()?;
-            let src_res: ID3D11Resource = src_texture.cast()?;
-            self.context.CopyResource(&dest_res, &src_res);
+        let staging_mutex = if deck_id == 0 { &self.staging_a } else { &self.staging_b };
+        if let Ok(mut staging_lock) = staging_mutex.lock() {
+            // TRUE ZERO-COPY: Hold the COM reference to the MF surface pool. 
+            // MF will not overwrite this surface until we drop it!
+            *staging_lock = Some(src_texture.clone());
         }
         Ok(())
     }

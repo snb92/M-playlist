@@ -249,16 +249,25 @@ pub extern "C" fn mplaylist_get_audio_device_name(index: u32, buffer: *mut u8, m
             &windows::Win32::Media::Audio::MMDeviceEnumerator, None, windows::Win32::System::Com::CLSCTX_ALL) {
             if let Ok(collection) = enum_obj.EnumAudioEndpoints(windows::Win32::Media::Audio::eRender, windows::Win32::Media::Audio::DEVICE_STATE_ACTIVE) {
                 if let Ok(device) = collection.Item(index) {
-                    if let Ok(id_pwstr) = device.GetId() {
-                        if !id_pwstr.is_null() {
-                            let name_str = id_pwstr.to_string().unwrap_or_default();
-                            let bytes = name_str.as_bytes();
-                            let copy_len = std::cmp::min(bytes.len(), (max_len - 1) as usize);
-                            std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, copy_len);
-                            *buffer.add(copy_len) = 0; // null terminator
-                            
-                            windows::Win32::System::Com::CoTaskMemFree(Some(id_pwstr.as_ptr() as *const std::ffi::c_void));
-                            return copy_len as u32;
+                    if let Ok(store) = device.OpenPropertyStore(windows::Win32::System::Com::STGM_READ) {
+                        let pkey = windows::Win32::UI::Shell::PropertiesSystem::PROPERTYKEY {
+                            fmtid: windows::core::GUID::from_values(0xa45c254e, 0xdf1c, 0x4efd, [0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0]),
+                            pid: 14,
+                        };
+                        if let Ok(prop_var) = store.GetValue(&pkey) {
+                            if prop_var.Anonymous.Anonymous.vt == windows::Win32::System::Variant::VT_LPWSTR {
+                                let pwstr = unsafe { prop_var.Anonymous.Anonymous.Anonymous.pwszVal };
+                                if !pwstr.is_null() {
+                                    let name_str = unsafe { pwstr.to_string().unwrap_or_default() };
+                                    let bytes = name_str.as_bytes();
+                                    let copy_len = std::cmp::min(bytes.len(), (max_len - 1) as usize);
+                                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, copy_len);
+                                    *buffer.add(copy_len) = 0; // null terminator
+                                    
+                                    windows::Win32::System::Com::CoTaskMemFree(Some(pwstr.as_ptr() as *const std::ffi::c_void));
+                                    return copy_len as u32;
+                                }
+                            }
                         }
                     }
                 }
