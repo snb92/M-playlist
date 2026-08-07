@@ -1,0 +1,36 @@
+[package]
+name = "m_playlist"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+libloading = "0.8"
+
+[dependencies.windows]
+version = "0.52.0"
+features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Threading",
+    "Win32_Media_Audio",           # WASAPI
+    "Win32_Media_Multimedia",     # AvSetMmThreadCharacteristics
+    "Win32_Media_MediaFoundation", # Video Decoding
+    "Win32_Graphics_Direct3D12",   # DX12 Rendering
+    "Win32_Graphics_Dxgi",         # Zero-copy surface linking
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_Devices_Properties",
+    "Win32_Security",
+    "Win32_System_Variant",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Devices_FunctionDiscovery",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D_Fxc",
+    "Win32_Graphics_Direct3D10",
+    "Win32_Media_KernelStreaming",
+    "Win32_UI_WindowsAndMessaging",
+]

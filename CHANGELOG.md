@@ -1,0 +1,46 @@
+# Changelog
+
+## [Unreleased]
+### Added
+- Initialized project with `CONTEXT.md`, `TODO.md`, and `CHANGELOG.md` to track zero-trust / OS-native architectural constraints.
+- Created `m_playlist` Rust library compiled as `cdylib` and locked `windows-rs` supply chain via `cargo vendor`.
+- Implemented lock-free `AudioRingBuffer` and `MasterClock`.
+- Implemented WASAPI Pro-Audio Real-Time thread with event-driven buffer feeding.
+- Implemented Media Foundation `IMFSourceReader` with D3D11/DXGI zero-copy bindings for hardware-accelerated video decoding.
+- Implemented Zero-Copy hardware texture intercept (`MFGetService`) and strict A/V sync gating against the Master Clock.
+- Implemented `Dx11Compositor` to initialize a DXGI Swapchain mapped directly to the frontend's physical window handle (HWND).
+- Configured Media Foundation's Video Processor to automatically scale and convert NV12 to ARGB32 in hardware for an instantaneous `CopyResource` block transfer to the screen buffer.
+- Pivoted frontend architecture from WinUI 3 to WPF to bypass `DesktopWindowXamlSource` HWND locking.
+- Scaffolded WPF application with a custom `VideoHwndHost` to provide a raw Win32 child window for the Rust DX11 Compositor.
+- Bound Rust C-FFI via `EngineInterop` and implemented the main WPF playback interface.
+- Implemented Dual-Engine State Machine (`Playlist`) for seamless A/B deck video cueing.
+- Implemented `start_time_offset` and pause gating in `MediaEngine` to strictly sync multiple video clips to the continuous WASAPI master clock.
+- Updated WPF UI with Playlist controls (Add Cues, Fire Next).
+- Resolved systemic `decode_loop` deadlock by dynamically discovering physical stream indices instead of using magic selection constants.
+- Resolved WASAPI audio starvation deadlock by isolating audio extraction from the A/V Sync Gate.
+- Fixed Master Clock starvation by ticking the hardware clock based on available buffer frames instead of written audio frames.
+- Resolved `E_NOINTERFACE` hardware extraction error by replacing legacy `MFGetService` broker with direct `IMFDXGIBuffer` COM cast to unwrap `ID3D11Texture2D`.
+- Built and integrated a zero-dependency UDP OSC Server using the pure Rust standard library, running on a background thread on port 51001, to parse `/mplaylist/fire_next` and trigger cues.
+- Refactored EngineState to use a lock-free `std::sync::mpsc` channel via `AppLogic`. UI and OSC triggers now push `EngineCommand` enums to a dedicated background thread, guaranteeing FFI callers are never blocked by heavy media decoding.
+- Fixed 5.1 audio stuttering by forcing the Windows OS Resampler to dynamically downmix any multi-channel payload to strictly 2-channel Stereo at 48000Hz prior to ring-buffer insertion.
+- Implemented `mplaylist_get_dimensions` FFI bridge to expose raw hardware DX11 texture dimensions to the C# WPF UI.
+- Solved WPF `HwndHost` infinite layout-pass spam and stretching behavior by explicitly forcing `Center` alignments and gating resize triggers with delta thresholds.
+- Fixed WPF `double.NaN` initialization bug that stranded the video frame at its 100x100 `HwndHost` default size.
+- Added a lock-free `clear()` routine to `AudioRingBuffer` that drops overlapping audio data instantly on A/B Deck hot-swaps to eliminate audio-tail bleed.
+- Added real-time A/V sync calibration and diagnostics global atomics (`SYNC_OFFSET_US`, `CURRENT_VIDEO_TIME_US`) mapped through a live FFI bridge to a C# WPF UI Timecode Dashboard.
+- Fixed WPF Airspace bleeding bug by constraining the `VideoSurface` `HwndHost` inside a `Grid.Row="0"` `Border`.
+- Implemented Endpoint Chasing (Auto-Recovery) in the WASAPI thread to automatically recover and resume from hardware disconnects (audio hot-plugging) in under 1 second.
+- Completed Staff Engineer Architecture Audit, verifying zero-copy adherence, memory safety, and thread decoupling.
+- Advanced Cue Model: Defined `#[repr(C)] FfiCue` struct to enforce a flat C-ABI memory boundary between C# and Rust.
+- Macro-State Migration: Refactored Rust engine to accept `EngineCue` objects, removing the need for `playlist.rs` to store file paths directly as strings.
+- WPF Architecture: Implemented MVVM-compliant `CueModel` and `ShowFileService.cs` leveraging `System.Text.Json` for `.mshow` disk serialization.
+- UI Ingestion: Built robust Drag-and-Drop file ingestion inside `MainWindow.xaml.cs` to instantly populate the `ObservableCollection<CueModel>`.
+- Implemented Phase 2: The Hardware Domain. Created `OutputWindow` for exact secondary monitor coordinates via `System.Windows.Forms.Screen`, and implemented dynamic WASAPI audio device hot-swapping via `GetId()` COM queries.
+- Implemented Phase 3: The Time Domain. Added `pending_scrub` atomic lock-free scrubbing and automated trim boundaries (`InPointHnsecs`/`OutPointHnsecs`) directly onto the active rendering `MediaEngine`. Decoupled WPF slider UI from background logic via `_isUserScrubbing` suppression flag.
+- Implemented Phase 4A: Broadcast Compositor (Graphics & Audio). Added custom HLSL Shaders (`VS_Main`, `PS_Main`) directly into the `Dx11Compositor` to linearly interpolate two DX11 texture streams. 
+- Avoided audio lock bottlenecks in Phase 4A by implementing zero-allocation stack-based dual-deck PCM mixing inside the WASAPI render loop, mathematically controlled by a bit-cast `AtomicU32` blend factor.
+- Enforced strict DX11 Multithread Protection (`SetMultithreadProtected(true)`) to prevent cross-thread collisions between the hardware media decoders and the compositor.
+- Implemented Phase 4B: Temporal State Machine & Deck Handoff. Upgraded the `AppLogic` thread to a 60Hz tick loop via `recv_timeout(16ms)`. This mathematically drives the lock-free `blend_factor` atomic based on the Master Clock and correctly performs VRAM memory cleanup by dropping the outgoing COM textures safely on the main logic thread, avoiding any decoding or rendering thread race conditions.
+- Implemented Phase 5A: Reverse Zero-Copy. Developed a 2-frame DX11 Pipelined Readback architecture using `D3D11_USAGE_STAGING` textures. The system asynchronously calls `CopyResource` from VRAM to System RAM and safely maps the previous frame to extract a non-blocking raw pixel pointer for future NDI broadcast. Added NDI Toggle FFI bridging.
+- Implemented Phase 5B: NDI Broadcast Output. Dynamically linked `Processing.NDI.Lib.x64.dll` via `libloading` for zero-trust compliance. Created a dedicated OS background thread (`NdiTransmitter`) receiving raw BGRA memory frames via a bounded `sync_channel(2)` with `try_send()`. This guarantees the DX11 Compositor is never stalled by network CPU compression delays.
+- **Hotfix (Phase 5B):** Resolved D3DCompile E_FAIL crash by adding missing `VS_OUT` struct to HLSL Pixel Shader string. Fixed zombie WPF background processes by overriding `OnClosed` in `MainWindow.xaml.cs`. Resolved false-positive unused-import warnings in `media_engine.rs` to verify that the Zero-Copy GPU Mandate (`MFCreateDXGIDeviceManager`, `IMFDXGIBuffer`) is active and successfully bypassing CPU memory.

@@ -1,0 +1,14 @@
+# Rust
+/m_playlist/target/
+**/*.rs.bk
+
+# C# / WPF / .NET
+/MPlaylistApp/bin/
+/MPlaylistApp/obj/
+.vs/
+*.user
+*.suo
+
+# OS
+.DS_Store
+Thumbs.db
