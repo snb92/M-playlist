@@ -385,7 +385,7 @@ impl MediaEngine {
                             let video_texture = texture_opt.unwrap();
 
                             // 3. Blast it to the screen via Compositor
-                            if let Err(e) = graphics.update_deck_texture(deck_id, &video_texture, subresource_index) {
+                            if let Err(e) = graphics.update_deck_texture(deck_id, &video_texture, subresource_index, &sample) {
                                 eprintln!("M-Playlist [RENDER ERROR]: Failed to update deck texture: {:?}", e);
                             }
                             

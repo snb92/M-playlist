@@ -81,6 +81,10 @@ pub struct BlendData {
     pub aspect_out: f32,
 }
 
+pub struct SendableSample(pub windows::Win32::Media::MediaFoundation::IMFSample);
+unsafe impl Send for SendableSample {}
+unsafe impl Sync for SendableSample {}
+
 pub struct Dx11Compositor {
     pub device: ID3D11Device,
     context: ID3D11DeviceContext,
@@ -91,8 +95,8 @@ pub struct Dx11Compositor {
     pixel_shader: ID3D11PixelShader,
     sampler: ID3D11SamplerState,
     constant_buffer: ID3D11Buffer,
-    pub staging_a: Mutex<Option<(ID3D11Texture2D, u32)>>,
-    pub staging_b: Mutex<Option<(ID3D11Texture2D, u32)>>,
+    pub staging_a: Mutex<Option<(ID3D11Texture2D, u32, SendableSample)>>,
+    pub staging_b: Mutex<Option<(ID3D11Texture2D, u32, SendableSample)>>,
     pub readback_textures: Mutex<[ID3D11Texture2D; 2]>,
     pub frame_counter: AtomicU64,
     pub ndi_tx: Mutex<Option<SyncSender<NdiFrame>>>,
@@ -259,11 +263,12 @@ impl Dx11Compositor {
         }
     }
 
-    pub fn update_deck_texture(&self, deck_id: u8, src_texture: &ID3D11Texture2D, subresource_index: u32) -> Result<()> {
+    pub fn update_deck_texture(&self, deck_id: u8, src_texture: &ID3D11Texture2D, subresource_index: u32, sample: &windows::Win32::Media::MediaFoundation::IMFSample) -> Result<()> {
         let staging_mutex = if deck_id == 0 { &self.staging_a } else { &self.staging_b };
         if let Ok(mut staging_lock) = staging_mutex.lock() {
             // TRUE ZERO-COPY: Hold the COM reference and the specific slice index!
-            *staging_lock = Some((src_texture.clone(), subresource_index));
+            // We MUST also hold the IMFSample reference so MF doesn't overwrite this slice in its pool!
+            *staging_lock = Some((src_texture.clone(), subresource_index, SendableSample(sample.clone())));
         }
         Ok(())
     }
@@ -306,8 +311,8 @@ impl Dx11Compositor {
             let lock_a = self.staging_a.lock().unwrap();
             let lock_b = self.staging_b.lock().unwrap();
 
-            let get_aspect = |tex_opt: &Option<(ID3D11Texture2D, u32)>| -> f32 {
-                if let Some((tex, _)) = tex_opt {
+            let get_aspect = |tex_opt: &Option<(ID3D11Texture2D, u32, SendableSample)>| -> f32 {
+                if let Some((tex, _, _)) = tex_opt {
                     let mut desc = D3D11_TEXTURE2D_DESC::default();
                     tex.GetDesc(&mut desc);
                     if desc.Height > 0 {
@@ -329,8 +334,8 @@ impl Dx11Compositor {
             
             self.context.PSSetConstantBuffers(0, Some(&[Some(self.constant_buffer.clone())]));
 
-            let create_srv = |tex_opt: &Option<(ID3D11Texture2D, u32)>| -> Result<Option<ID3D11ShaderResourceView>> {
-                if let Some((tex, subresource)) = tex_opt {
+            let create_srv = |tex_opt: &Option<(ID3D11Texture2D, u32, SendableSample)>| -> Result<Option<ID3D11ShaderResourceView>> {
+                if let Some((tex, subresource, _)) = tex_opt {
                     let mut desc = D3D11_TEXTURE2D_DESC::default();
                     tex.GetDesc(&mut desc);
 
