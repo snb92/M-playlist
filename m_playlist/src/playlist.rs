@@ -58,6 +58,7 @@ impl Playlist {
             if !self.is_deck_a_active {
                 println!("M-Playlist [LOGIC]: Firing Deck A (Crossfade)...");
                 ring_a.clear();
+                graphics.clear_deck(0);
                 self.deck_a = Some(MediaEngine::new(0).unwrap());
                 if let Some(deck_a) = self.deck_a.as_mut() {
                     deck_a.load_and_play(cue, ring_a.clone(), clock.clone(), graphics.clone(), blend_factor.clone()).unwrap();
@@ -66,6 +67,7 @@ impl Playlist {
             } else {
                 println!("M-Playlist [LOGIC]: Firing Deck B (Crossfade)...");
                 ring_b.clear();
+                graphics.clear_deck(1);
                 self.deck_b = Some(MediaEngine::new(1).unwrap());
                 if let Some(deck_b) = self.deck_b.as_mut() {
                     deck_b.load_and_play(cue, ring_b.clone(), clock.clone(), graphics.clone(), blend_factor.clone()).unwrap();
@@ -78,6 +80,7 @@ impl Playlist {
             if !self.is_deck_a_active {
                 println!("M-Playlist [LOGIC]: Firing Deck A (Hard Cut)...");
                 ring_a.clear();
+                graphics.clear_deck(0);
                 self.deck_b = None; 
                 blend_factor.store(0.0_f32.to_bits(), std::sync::atomic::Ordering::Release);
                 
@@ -89,6 +92,7 @@ impl Playlist {
             } else {
                 println!("M-Playlist [LOGIC]: Firing Deck B (Hard Cut)...");
                 ring_b.clear();
+                graphics.clear_deck(1);
                 self.deck_a = None;
                 blend_factor.store(1.0_f32.to_bits(), std::sync::atomic::Ordering::Release);
                 

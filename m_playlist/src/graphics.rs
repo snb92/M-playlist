@@ -301,6 +301,13 @@ impl Dx11Compositor {
         Ok(())
     }
 
+    pub fn clear_deck(&self, deck_id: u8) {
+        let staging_mutex = if deck_id == 0 { &self.staging_a } else { &self.staging_b };
+        if let Ok(mut staging_lock) = staging_mutex.lock() {
+            *staging_lock = None;
+        }
+    }
+
     pub fn render_composited(&self, blend_factor: f32) -> Result<()> {
         unsafe {
             let backbuffer: ID3D11Texture2D = self.swapchain.GetBuffer(0)?;

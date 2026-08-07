@@ -11,10 +11,10 @@ namespace MPlaylistApp
 {
     public partial class MainWindow : Window
     {
-        private DispatcherTimer _uiTimer;
+        private DispatcherTimer? _uiTimer;
         private bool _isUserScrubbing = false;
         private ObservableCollection<CueModel> _playlist = new ObservableCollection<CueModel>();
-        private VideoHwndHost _videoSurface;
+        private VideoHwndHost? _videoSurface;
 
         public MainWindow()
         {
@@ -173,7 +173,7 @@ namespace MPlaylistApp
             System.Environment.Exit(0);
         }
 
-        private void MainWindow_Closed(object sender, EventArgs e)
+        private void MainWindow_Closed(object? sender, EventArgs e)
         {
             // 4. Safely kill the WASAPI and MF threads
             EngineInterop.mplaylist_shutdown();

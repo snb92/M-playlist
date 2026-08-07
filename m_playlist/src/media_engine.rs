@@ -6,6 +6,7 @@ use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED, CoUninit
 use windows::Win32::Media::MediaFoundation::{
     MFCreateSourceReaderFromURL, IMFSourceReader, IMFDXGIDeviceManager, MFCreateDXGIDeviceManager,
     MFCreateAttributes, IMFAttributes, MF_SOURCE_READER_D3D_MANAGER, MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING,
+    MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS,
     MFCreateMediaType, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE,
     MFMediaType_Audio, MFAudioFormat_Float, MF_SOURCE_READER_FIRST_AUDIO_STREAM, MF_SOURCE_READER_FIRST_VIDEO_STREAM,
     MF_SOURCE_READERF_ENDOFSTREAM, IMFDXGIBuffer, MFVideoFormat_ARGB32, MFMediaType_Video,
@@ -95,6 +96,9 @@ impl MediaEngine {
                 
                 // HARDWARE GPU VIDEO PROCESSOR ONLY (Must use ADVANCED for D3D11/DXGI)
                 attributes.SetUINT32(&MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, 1).unwrap();
+
+                // ENABLE DXVA HARDWARE DECODING (Decompress H.264/HEVC on GPU ASIC instead of CPU)
+                attributes.SetUINT32(&MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, 1).unwrap();
 
                 // 5. Initialize the Source Reader with the File Path and GPU Attributes
                 let pcwstr_path = PCWSTR::from_raw(path_vec.as_ptr());
