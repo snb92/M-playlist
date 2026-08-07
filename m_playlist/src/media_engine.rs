@@ -212,6 +212,8 @@ impl MediaEngine {
     ) {
         let mut start_time_offset = 0.0;
         let mut has_started = false;
+        let mut is_currently_paused = false;
+        let mut pause_start_time = 0.0;
 
         while is_playing.load(Ordering::Acquire) {
             
@@ -229,16 +231,28 @@ impl MediaEngine {
                 let _ = reader.SetCurrentPosition(&windows::core::GUID::zeroed(), &prop);
                 
                 audio_ring.clear();
-                clock.overwrite_time(target_hnsecs);
-                has_started = false;
+                
+                // CRITICAL FIX: Instantly sync the playback offset to the target scrub time!
+                let target_sec = target_hnsecs as f64 / 10_000_000.0;
+                start_time_offset = clock.get_time_seconds() - target_sec;
+                
                 force_read_once = true; // Bypass pause gate to execute the visual frame update
             }
 
             // --- THE PAUSE GATE ---
-            if is_paused.load(Ordering::Acquire) && !force_read_once {
+            let currently_paused = is_paused.load(Ordering::Acquire);
+            if currently_paused && !force_read_once {
+                if !is_currently_paused {
+                    pause_start_time = clock.get_time_seconds();
+                    is_currently_paused = true;
+                }
                 thread::sleep(Duration::from_millis(5));
-                has_started = false;
                 continue;
+            } else if is_currently_paused {
+                // We just unpaused! Shift the start_time_offset forward by the duration of the pause!
+                let pause_duration = clock.get_time_seconds() - pause_start_time;
+                start_time_offset += pause_duration;
+                is_currently_paused = false;
             }
 
             if !has_started {
@@ -311,6 +325,18 @@ impl MediaEngine {
                     
                     // Report the exact video frame time to the global diagnostic tracker!
                     crate::ffi::CURRENT_VIDEO_TIME_US.store((frame_time_sec * 1_000_000.0) as u64, std::sync::atomic::Ordering::Relaxed);
+                    
+                    let current_playback_time = clock.get_time_seconds() - start_time_offset;
+                    let offset_us = crate::ffi::SYNC_OFFSET_US.load(std::sync::atomic::Ordering::Relaxed);
+                    let hardware_sync_offset = offset_us as f64 / 1_000_000.0;
+                    let calibrated_time = current_playback_time - hardware_sync_offset;
+                    
+                    // --- FRAME DROP LOGIC (Slow Decoder Protection) ---
+                    // If the hardware decoder is choking on a 120FPS 4K file and falls >50ms behind real-time,
+                    // we must DROP the frame to prevent the video from playing in slow motion!
+                    if frame_time_sec < calibrated_time - 0.05 && !force_read_once {
+                        continue;
+                    }
                     
                     // --- VIDEO A/V SYNC GATE ---
                     loop {
