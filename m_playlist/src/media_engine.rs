@@ -369,6 +369,8 @@ impl MediaEngine {
                         
                         if let Ok(dxgi_buffer) = dxgi_buffer_result {
                             
+                            let subresource_index = unsafe { dxgi_buffer.GetSubresourceIndex().unwrap_or(0) };
+                            
                             // 2. Extract the native D3D11 Texture from the DXGI Buffer!
                             let mut texture_opt: Option<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D> = None;
                             let hr = unsafe { dxgi_buffer.GetResource(
@@ -383,7 +385,7 @@ impl MediaEngine {
                             let video_texture = texture_opt.unwrap();
 
                             // 3. Blast it to the screen via Compositor
-                            if let Err(e) = graphics.update_deck_texture(deck_id, &video_texture) {
+                            if let Err(e) = graphics.update_deck_texture(deck_id, &video_texture, subresource_index) {
                                 eprintln!("M-Playlist [RENDER ERROR]: Failed to update deck texture: {:?}", e);
                             }
                             

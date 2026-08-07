@@ -5,7 +5,7 @@ use windows::core::{ComInterface, Result};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Direct3D::{
     D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_1, ID3DBlob, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
-    D3D_SRV_DIMENSION_TEXTURE2D,
+    D3D_SRV_DIMENSION_TEXTURE2D, D3D_SRV_DIMENSION_TEXTURE2DARRAY,
 };
 use windows::Win32::Graphics::Direct3D::Fxc::D3DCompile;
 use windows::Win32::Graphics::Direct3D11::{
@@ -91,8 +91,8 @@ pub struct Dx11Compositor {
     pixel_shader: ID3D11PixelShader,
     sampler: ID3D11SamplerState,
     constant_buffer: ID3D11Buffer,
-    pub staging_a: Mutex<Option<ID3D11Texture2D>>,
-    pub staging_b: Mutex<Option<ID3D11Texture2D>>,
+    pub staging_a: Mutex<Option<(ID3D11Texture2D, u32)>>,
+    pub staging_b: Mutex<Option<(ID3D11Texture2D, u32)>>,
     pub readback_textures: Mutex<[ID3D11Texture2D; 2]>,
     pub frame_counter: AtomicU64,
     pub ndi_tx: Mutex<Option<SyncSender<NdiFrame>>>,
@@ -259,12 +259,11 @@ impl Dx11Compositor {
         }
     }
 
-    pub fn update_deck_texture(&self, deck_id: u8, src_texture: &ID3D11Texture2D) -> Result<()> {
+    pub fn update_deck_texture(&self, deck_id: u8, src_texture: &ID3D11Texture2D, subresource_index: u32) -> Result<()> {
         let staging_mutex = if deck_id == 0 { &self.staging_a } else { &self.staging_b };
         if let Ok(mut staging_lock) = staging_mutex.lock() {
-            // TRUE ZERO-COPY: Hold the COM reference to the MF surface pool. 
-            // MF will not overwrite this surface until we drop it!
-            *staging_lock = Some(src_texture.clone());
+            // TRUE ZERO-COPY: Hold the COM reference and the specific slice index!
+            *staging_lock = Some((src_texture.clone(), subresource_index));
         }
         Ok(())
     }
@@ -307,15 +306,15 @@ impl Dx11Compositor {
             let lock_a = self.staging_a.lock().unwrap();
             let lock_b = self.staging_b.lock().unwrap();
 
-            let get_aspect = |tex_opt: &Option<ID3D11Texture2D>| -> f32 {
-                if let Some(tex) = tex_opt {
+            let get_aspect = |tex_opt: &Option<(ID3D11Texture2D, u32)>| -> f32 {
+                if let Some((tex, _)) = tex_opt {
                     let mut desc = D3D11_TEXTURE2D_DESC::default();
                     tex.GetDesc(&mut desc);
                     if desc.Height > 0 {
                         return desc.Width as f32 / desc.Height as f32;
                     }
                 }
-                0.0
+                1.0
             };
 
             let aspect_a = get_aspect(&*lock_a);
@@ -330,20 +329,31 @@ impl Dx11Compositor {
             
             self.context.PSSetConstantBuffers(0, Some(&[Some(self.constant_buffer.clone())]));
 
-            let create_srv = |tex_opt: &Option<ID3D11Texture2D>| -> Result<Option<ID3D11ShaderResourceView>> {
-                if let Some(tex) = tex_opt {
+            let create_srv = |tex_opt: &Option<(ID3D11Texture2D, u32)>| -> Result<Option<ID3D11ShaderResourceView>> {
+                if let Some((tex, subresource)) = tex_opt {
                     let mut desc = D3D11_TEXTURE2D_DESC::default();
                     tex.GetDesc(&mut desc);
-                    let srv_desc = D3D11_SHADER_RESOURCE_VIEW_DESC {
+
+                    let mut srv_desc = D3D11_SHADER_RESOURCE_VIEW_DESC {
                         Format: desc.Format,
-                        ViewDimension: D3D_SRV_DIMENSION_TEXTURE2D,
-                        Anonymous: windows::Win32::Graphics::Direct3D11::D3D11_SHADER_RESOURCE_VIEW_DESC_0 {
-                            Texture2D: windows::Win32::Graphics::Direct3D11::D3D11_TEX2D_SRV {
-                                MostDetailedMip: 0,
-                                MipLevels: 1,
-                            }
-                        },
+                        ..Default::default()
                     };
+
+                    if desc.ArraySize > 1 {
+                        srv_desc.ViewDimension = D3D_SRV_DIMENSION_TEXTURE2DARRAY;
+                        srv_desc.Anonymous.Texture2DArray = windows::Win32::Graphics::Direct3D11::D3D11_TEX2D_ARRAY_SRV {
+                            MostDetailedMip: 0,
+                            MipLevels: 1,
+                            FirstArraySlice: *subresource,
+                            ArraySize: 1,
+                        };
+                    } else {
+                        srv_desc.ViewDimension = D3D_SRV_DIMENSION_TEXTURE2D;
+                        srv_desc.Anonymous.Texture2D = windows::Win32::Graphics::Direct3D11::D3D11_TEX2D_SRV {
+                            MostDetailedMip: 0,
+                            MipLevels: 1,
+                        };
+                    }
                     let mut srv_opt: Option<ID3D11ShaderResourceView> = None;
                     let res: ID3D11Resource = tex.cast()?;
                     self.device.CreateShaderResourceView(&res, Some(&srv_desc), Some(&mut srv_opt))?;
