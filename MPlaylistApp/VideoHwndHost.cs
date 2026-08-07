@@ -39,6 +39,18 @@ namespace MPlaylistApp
             DestroyWindow(hwnd.Handle);
         }
 
+        public void ResizeHwnd(int physicalWidth, int physicalHeight)
+        {
+            if (this.Handle != IntPtr.Zero)
+            {
+                // SWP_NOMOVE = 0x0002, SWP_NOZORDER = 0x0004
+                SetWindowPos(this.Handle, IntPtr.Zero, 0, 0, physicalWidth, physicalHeight, 0x0002 | 0x0004);
+            }
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
         [DllImport("user32.dll", EntryPoint = "CreateWindowEx", CharSet = CharSet.Unicode)]
         private static extern IntPtr CreateWindowEx(
             int dwExStyle, string lpszClassName, string lpszWindowName, 
