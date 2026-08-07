@@ -15,6 +15,11 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo.
+echo [1.5/2] Deploying Engine DLL...
+copy /Y target\release\m_playlist.dll ..\MPlaylistApp\bin\Debug\net8.0-windows\m_playlist.dll >nul
+copy /Y target\release\m_playlist.dll ..\MPlaylistApp\bin\Release\net8.0-windows\m_playlist.dll >nul
+
+echo.
 echo [2/2] Launching C# WPF Brain...
 cd ../MPlaylistApp
 dotnet run
