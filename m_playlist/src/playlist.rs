@@ -15,6 +15,7 @@ pub struct Playlist {
     pub transition_start_time: f64,
     pub transition_duration_hnsecs: i64,
     pub ndi_enabled: bool,
+    pub pending_fire: bool,
 }
 
 impl Playlist {
@@ -29,6 +30,7 @@ impl Playlist {
             transition_start_time: 0.0,
             transition_duration_hnsecs: 0,
             ndi_enabled: false,
+            pending_fire: false,
         }
     }
 
@@ -37,8 +39,12 @@ impl Playlist {
         println!("M-Playlist [LOGIC]: Added Cue #{} - {}", self.cues.len(), self.cues.last().unwrap().filepath);
     }
 
-    pub fn fire_next_cue(
+    pub fn fire_cue(
         &mut self,
+        cue_index: u32,
+        transition_ms: u32,
+        in_point_hnsecs: i64,
+        out_point_hnsecs: i64,
         ring_a: Arc<AudioRingBuffer>,
         ring_b: Arc<AudioRingBuffer>,
         blend_factor: Arc<std::sync::atomic::AtomicU32>,
@@ -47,16 +53,22 @@ impl Playlist {
     ) {
         if self.cues.is_empty() { return; }
 
+        self.current_index = (cue_index as usize) % self.cues.len();
+
+        // UPDATE the stored cue dynamically to reflect UI adjustments!
+        self.cues[self.current_index].in_point_hnsecs = in_point_hnsecs;
+        self.cues[self.current_index].out_point_hnsecs = out_point_hnsecs;
+
         let cue = &self.cues[self.current_index];
         let has_active_deck = self.deck_a.is_some() || self.deck_b.is_some();
+        let transition_hnsecs = (transition_ms as i64) * 10_000;
         
-        if cue.transition_duration_hnsecs > 0 && has_active_deck {
-            self.transition_start_time = clock.get_time_seconds();
-            self.transition_duration_hnsecs = cue.transition_duration_hnsecs;
-            self.is_transitioning = true;
+        if transition_hnsecs > 0 && has_active_deck {
+            self.transition_duration_hnsecs = transition_hnsecs;
+            self.pending_fire = true;
             
             if !self.is_deck_a_active {
-                println!("M-Playlist [LOGIC]: Firing Deck A (Crossfade)...");
+                println!("M-Playlist [LOGIC]: Preparing Deck A (Crossfade)...");
                 ring_a.clear();
                 graphics.clear_deck(0);
                 self.deck_a = Some(MediaEngine::new(0).unwrap());
@@ -65,7 +77,7 @@ impl Playlist {
                     deck_a.is_paused.store(false, std::sync::atomic::Ordering::Release);
                 }
             } else {
-                println!("M-Playlist [LOGIC]: Firing Deck B (Crossfade)...");
+                println!("M-Playlist [LOGIC]: Preparing Deck B (Crossfade)...");
                 ring_b.clear();
                 graphics.clear_deck(1);
                 self.deck_b = Some(MediaEngine::new(1).unwrap());
@@ -75,14 +87,13 @@ impl Playlist {
                 }
             }
         } else {
-            self.is_transitioning = false;
+            self.transition_duration_hnsecs = 0;
+            self.pending_fire = true;
             
             if !self.is_deck_a_active {
-                println!("M-Playlist [LOGIC]: Firing Deck A (Hard Cut)...");
+                println!("M-Playlist [LOGIC]: Preparing Deck A (Hard Cut)...");
                 ring_a.clear();
                 graphics.clear_deck(0);
-                self.deck_b = None; 
-                blend_factor.store(0.0_f32.to_bits(), std::sync::atomic::Ordering::Release);
                 
                 self.deck_a = Some(MediaEngine::new(0).unwrap());
                 if let Some(deck_a) = self.deck_a.as_mut() {
@@ -90,11 +101,9 @@ impl Playlist {
                     deck_a.is_paused.store(false, std::sync::atomic::Ordering::Release);
                 }
             } else {
-                println!("M-Playlist [LOGIC]: Firing Deck B (Hard Cut)...");
+                println!("M-Playlist [LOGIC]: Preparing Deck B (Hard Cut)...");
                 ring_b.clear();
                 graphics.clear_deck(1);
-                self.deck_a = None;
-                blend_factor.store(1.0_f32.to_bits(), std::sync::atomic::Ordering::Release);
                 
                 self.deck_b = Some(MediaEngine::new(1).unwrap());
                 if let Some(deck_b) = self.deck_b.as_mut() {
@@ -104,7 +113,6 @@ impl Playlist {
             }
         }
 
-        self.is_deck_a_active = !self.is_deck_a_active;
         self.current_index = (self.current_index + 1) % self.cues.len();
     }
 
@@ -120,6 +128,35 @@ impl Playlist {
     }
 
     pub fn tick(&mut self, clock: &MasterClock, blend_factor: &std::sync::atomic::AtomicU32, graphics: &Dx11Compositor, geometry: &[[f32; 4]; 4]) {
+        
+        if self.pending_fire {
+            let incoming_ready = if self.is_deck_a_active {
+                self.deck_b.as_ref().map_or(false, |d| d.has_started.load(std::sync::atomic::Ordering::Acquire))
+            } else {
+                self.deck_a.as_ref().map_or(false, |d| d.has_started.load(std::sync::atomic::Ordering::Acquire))
+            };
+
+            if incoming_ready {
+                self.pending_fire = false;
+                self.is_deck_a_active = !self.is_deck_a_active;
+                
+                if self.transition_duration_hnsecs > 0 {
+                    self.is_transitioning = true;
+                    self.transition_start_time = clock.get_time_seconds();
+                } else {
+                    // Hard cut - instantly drop outgoing deck
+                    self.is_transitioning = false;
+                    if self.is_deck_a_active {
+                        blend_factor.store(0.0_f32.to_bits(), std::sync::atomic::Ordering::Release);
+                        self.deck_b = None; 
+                    } else {
+                        blend_factor.store(1.0_f32.to_bits(), std::sync::atomic::Ordering::Release);
+                        self.deck_a = None;
+                    }
+                }
+            }
+        }
+
         if self.is_transitioning {
             let elapsed = clock.get_time_seconds() - self.transition_start_time;
             let duration = self.transition_duration_hnsecs as f64 / 10_000_000.0;

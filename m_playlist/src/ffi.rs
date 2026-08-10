@@ -39,8 +39,8 @@ static ENGINE_STATE: OnceLock<Mutex<EngineState>> = OnceLock::new();
 fn get_state() -> &'static Mutex<EngineState> {
     ENGINE_STATE.get_or_init(|| {
         Mutex::new(EngineState {
-            ring_a: Arc::new(AudioRingBuffer::new(48000 * 2)), // 1 second buffer at 48k stereo
-            ring_b: Arc::new(AudioRingBuffer::new(48000 * 2)), // 1 second buffer at 48k stereo
+            ring_a: Arc::new(AudioRingBuffer::new(48000 * 2 * 10)), // 10 seconds buffer at 48k stereo
+            ring_b: Arc::new(AudioRingBuffer::new(48000 * 2 * 10)), // 10 seconds buffer at 48k stereo
             blend_factor: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             clock: Arc::new(MasterClock::new(48000)),
             wasapi: None,
@@ -69,7 +69,9 @@ pub extern "C" fn mplaylist_init() -> bool {
             let internal_state = get_state().lock().unwrap();
             // Grabbing the Mutex here is instantaneous because we only drop an enum into a queue!
             if let Some(logic) = internal_state.app_logic.as_ref() {
-                let _ = logic.tx.send(EngineCommand::FireNext); 
+                // Warning: OSC FireNext needs an index if it's acting as "FireCue". 
+                // Using 0 for now as an emergency fallback, but it breaks deterministic indexing!
+                let _ = logic.tx.send(EngineCommand::FireCue(0, 0, 0, 0)); 
             }
         }) {
             Ok(server) => state.osc = Some(server),
@@ -165,10 +167,10 @@ pub extern "C" fn mplaylist_load_cue(cue: FfiCue) -> bool {
 }
 
 #[no_mangle]
-pub extern "C" fn mplaylist_fire_next() -> bool {
+pub extern "C" fn mplaylist_fire_cue(cue_index: u32, transition_ms: u32, in_point_hnsecs: i64, out_point_hnsecs: i64) -> bool {
     let state = get_state().lock().unwrap();
     if let Some(logic) = state.app_logic.as_ref() {
-        let _ = logic.tx.send(EngineCommand::FireNext);
+        let _ = logic.tx.send(EngineCommand::FireCue(cue_index, transition_ms, in_point_hnsecs, out_point_hnsecs));
         return true;
     }
     false

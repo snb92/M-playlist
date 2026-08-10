@@ -44,8 +44,8 @@
 - [ ] Dynamic Audio Routing
 
 ### Phase 3: The Time Domain (Physics & Manipulation)
-- [ ] Clip Trimming (In / Out Points)
-- [ ] Seeking / Scrubbing
+- [x] Clip Trimming (In / Out Points)
+- [x] Seeking / Scrubbing
 
 ### Phase 4: Broadcast Capabilities
 - [x] Crossfades & Shaders (A/B Deck Compositor)

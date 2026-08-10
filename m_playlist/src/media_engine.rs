@@ -22,6 +22,7 @@ pub struct MediaEngine {
     is_playing: Arc<AtomicBool>,
     pub is_paused: Arc<AtomicBool>,
     pub pending_scrub: Arc<AtomicI64>,
+    pub has_started: Arc<AtomicBool>,
     deck_id: u8,
     _decoder_thread: Option<thread::JoinHandle<()>>,
 }
@@ -32,6 +33,7 @@ impl MediaEngine {
             is_playing: Arc::new(AtomicBool::new(false)),
             is_paused: Arc::new(AtomicBool::new(true)),
             pending_scrub: Arc::new(AtomicI64::new(-1)),
+            has_started: Arc::new(AtomicBool::new(false)),
             deck_id,
             _decoder_thread: None,
         })
@@ -55,6 +57,7 @@ impl MediaEngine {
         let is_playing_clone = self.is_playing.clone();
         let is_paused_clone = self.is_paused.clone();
         let pending_scrub_clone = self.pending_scrub.clone();
+        let has_started_clone = self.has_started.clone();
         let deck_id = self.deck_id;
 
         // 1. Convert string to UTF16 for MFCreateSourceReaderFromURL
@@ -165,7 +168,6 @@ impl MediaEngine {
                     (*prop.Anonymous.Anonymous).vt = windows::Win32::System::Variant::VT_I8;
                     (*prop.Anonymous.Anonymous).Anonymous.hVal = in_point;
                     source_reader.SetCurrentPosition(&windows::core::GUID::zeroed(), &prop).unwrap();
-                    _clock.overwrite_time(in_point);
                 }
 
                 // 7. The Decoding Pump
@@ -176,6 +178,7 @@ impl MediaEngine {
                     is_playing_clone, 
                     is_paused_clone,
                     pending_scrub_clone,
+                    has_started_clone,
                     actual_video_stream,
                     actual_audio_stream,
                     graphics,
@@ -201,6 +204,7 @@ impl MediaEngine {
         is_playing: Arc<std::sync::atomic::AtomicBool>,
         is_paused: Arc<std::sync::atomic::AtomicBool>,
         pending_scrub: Arc<std::sync::atomic::AtomicI64>,
+        has_started: Arc<std::sync::atomic::AtomicBool>,
         video_stream_index: u32,
         audio_stream_index: u32,
         graphics: Arc<crate::graphics::Dx11Compositor>,
@@ -211,15 +215,18 @@ impl MediaEngine {
         deck_id: u8
     ) {
         let mut start_time_offset = 0.0;
-        let mut has_started = false;
         let mut is_currently_paused = false;
         let mut pause_start_time = 0.0;
+
+        let mut first_video_frame_seen = false;
+        let mut is_normalized_decoder = false;
+        let mut current_base_hnsecs = in_point_hnsecs;
+        let mut force_read_once = false;
 
         while is_playing.load(Ordering::Acquire) {
             
             // 1. Check for manual scrubs!
             let target_hnsecs = pending_scrub.swap(-1, Ordering::SeqCst);
-            let mut force_read_once = false;
             
             if target_hnsecs >= 0 {
                 let _ = reader.Flush(windows::Win32::Media::MediaFoundation::MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32);
@@ -235,6 +242,9 @@ impl MediaEngine {
                 // CRITICAL FIX: Instantly sync the playback offset to the target scrub time!
                 let target_sec = target_hnsecs as f64 / 10_000_000.0;
                 start_time_offset = clock.get_time_seconds() - target_sec;
+                
+                current_base_hnsecs = target_hnsecs;
+                first_video_frame_seen = false;
                 
                 force_read_once = true; // Bypass pause gate to execute the visual frame update
             }
@@ -255,11 +265,7 @@ impl MediaEngine {
                 is_currently_paused = false;
             }
 
-            if !has_started {
-                // Snapshot the master clock exactly when playback begins!
-                start_time_offset = clock.get_time_seconds();
-                has_started = true;
-            }
+
             // ----------------------
             let mut stream_index = 0;
             let mut flags = 0;
@@ -305,7 +311,26 @@ impl MediaEngine {
                     }
                     
                 } else if stream_index == video_stream_index {
-                    let frame_time_100ns = sample.GetSampleTime().unwrap_or(0);
+                    let mut frame_time_100ns = timestamp;
+                    
+                    if !first_video_frame_seen {
+                        if current_base_hnsecs > 0 && frame_time_100ns < (current_base_hnsecs / 2) {
+                            println!("M-Playlist [WARNING]: Hardware Decoder normalized timestamps. Engaging absolute timeline correction.");
+                            is_normalized_decoder = true;
+                        } else {
+                            is_normalized_decoder = false;
+                        }
+                        first_video_frame_seen = true;
+                    }
+
+                    if is_normalized_decoder {
+                        frame_time_100ns += current_base_hnsecs;
+                    }
+                    
+                    // PRE-ROLL PURGE: Discard hardware keyframes emitted before the target trim boundary
+                    if frame_time_100ns < current_base_hnsecs {
+                        continue;
+                    }
                     
                     if out_point_hnsecs > 0 && frame_time_100ns >= out_point_hnsecs {
                         if is_looping {
@@ -321,7 +346,15 @@ impl MediaEngine {
                         }
                     }
 
-                    let frame_time_sec = frame_time_100ns as f64 / 10_000_000.0;
+                    if !has_started.load(Ordering::Acquire) {
+                        let in_point_sec = in_point_hnsecs as f64 / 10_000_000.0;
+                        // Anchor the local timeline exactly when the first frame is ready, neutralizing seek latency
+                        start_time_offset = clock.get_time_seconds() - in_point_sec; 
+                        has_started.store(true, Ordering::Release);
+                    }
+
+                    let normalized_time_100ns = frame_time_100ns;
+                    let frame_time_sec = normalized_time_100ns as f64 / 10_000_000.0;
                     
                     // Report the exact video frame time to the global diagnostic tracker!
                     crate::ffi::CURRENT_VIDEO_TIME_US.store((frame_time_sec * 1_000_000.0) as u64, std::sync::atomic::Ordering::Relaxed);
@@ -360,6 +393,8 @@ impl MediaEngine {
                         // Tightened sleep to 1ms for higher precision polling
                         std::thread::sleep(std::time::Duration::from_millis(1)); 
                     }
+                    
+                    force_read_once = false;
                     
                     // EXTRACT & RENDER
                     if let Ok(media_buffer) = sample.GetBufferByIndex(0) {

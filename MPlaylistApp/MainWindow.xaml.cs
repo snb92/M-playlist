@@ -168,14 +168,24 @@ namespace MPlaylistApp
         {
             if (PlaylistUI.Items.Count > 0)
             {
-                EngineInterop.mplaylist_fire_next();
+                int targetIndex = PlaylistUI.SelectedIndex;
+                if (targetIndex == -1 && _playlist.Count > 0) targetIndex = 0;
+                if (targetIndex < 0) return;
+
+                var nextCue = _playlist[targetIndex];
+                uint transMs = (uint)(nextCue.TransitionDuration * 1000);
+                long inHnsecs = (long)(nextCue.InPoint * 10000000.0);
+                long outHnsecs = (long)(nextCue.OutPoint * 10000000.0);
+
+                // Fire the CURRENT target
+                EngineInterop.mplaylist_fire_cue((uint)targetIndex, transMs, inHnsecs, outHnsecs);
                 
-                // Visually select the active cue
-                int nextIndex = PlaylistUI.SelectedIndex + 1;
-                if (nextIndex >= PlaylistUI.Items.Count) nextIndex = 0;
-                PlaylistUI.SelectedIndex = nextIndex;
-                
-                StatusText.Text = $"Playing Cue #{nextIndex + 1}";
+                // POST-Advance the UI selection
+                if (_playlist.Count > 0)
+                {
+                    PlaylistUI.SelectedIndex = (targetIndex + 1) % _playlist.Count;
+                }
+                StatusText.Text = $"Playing Cue #{targetIndex + 1}";
             }
         }
 

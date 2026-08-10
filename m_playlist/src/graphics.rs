@@ -49,6 +49,18 @@ cbuffer BlendBuffer : register(b0) {
     float4x4 invHomography;
 };
 
+float2 FitAspect(float2 uv, float texAspect, float outAspect) {
+    if (texAspect <= 0.01 || outAspect <= 0.01) return uv;
+    float scaleX = 1.0;
+    float scaleY = 1.0;
+    if (texAspect > outAspect) {
+        scaleY = outAspect / texAspect;
+    } else {
+        scaleX = texAspect / outAspect;
+    }
+    return float2((uv.x - 0.5) / scaleX + 0.5, (uv.y - 0.5) / scaleY + 0.5);
+}
+
 float4 PS_Main(VS_OUT input) : SV_TARGET {
     // 1. Multiply the screen UV by the inverse 3D matrix
     float3 uvw = mul(float3(input.uv, 1.0), (float3x3)invHomography);
@@ -61,8 +73,18 @@ float4 PS_Main(VS_OUT input) : SV_TARGET {
         return float4(0, 0, 0, 1);
     }
     
-    float4 colorA = texA.Sample(smp, final_uv);
-    float4 colorB = texB.Sample(smp, final_uv);
+    float2 uvA = FitAspect(final_uv, aspectA, aspectOut);
+    float4 colorA = float4(0, 0, 0, 1);
+    if (uvA.x >= 0.0 && uvA.x <= 1.0 && uvA.y >= 0.0 && uvA.y <= 1.0) {
+        colorA = texA.Sample(smp, uvA);
+    }
+    
+    float2 uvB = FitAspect(final_uv, aspectB, aspectOut);
+    float4 colorB = float4(0, 0, 0, 1);
+    if (uvB.x >= 0.0 && uvB.x <= 1.0 && uvB.y >= 0.0 && uvB.y <= 1.0) {
+        colorB = texB.Sample(smp, uvB);
+    }
+    
     return lerp(colorA, colorB, blendFactor);
 }
 \0";

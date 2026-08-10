@@ -35,9 +35,18 @@ namespace MPlaylistApp
         public string Title { get => _title; set { _title = value; OnPropertyChanged(); } }
         public long InPointHnsecs { get => _inPointHnsecs; set { _inPointHnsecs = value; OnPropertyChanged(); } }
         public long OutPointHnsecs { get => _outPointHnsecs; set { _outPointHnsecs = value; OnPropertyChanged(); } }
+
+        private double _inPoint;
+        public double InPoint { get => _inPoint; set { _inPoint = value; OnPropertyChanged(); } }
+        
+        private double _outPoint;
+        public double OutPoint { get => _outPoint; set { _outPoint = value; OnPropertyChanged(); } }
         public bool IsLooping { get => _isLooping; set { _isLooping = value; OnPropertyChanged(); } }
         public bool HoldLastFrame { get => _holdLastFrame; set { _holdLastFrame = value; OnPropertyChanged(); } }
         public long TransitionDurationHnsecs { get => _transitionDurationHnsecs; set { _transitionDurationHnsecs = value; OnPropertyChanged(); } }
+        
+        private double _transitionDuration;
+        public double TransitionDuration { get => _transitionDuration; set { _transitionDuration = value; OnPropertyChanged(); } }
 
         private void SetupWatcher()
         {

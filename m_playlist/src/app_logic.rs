@@ -20,7 +20,7 @@ pub struct EngineCue {
 
 pub enum EngineCommand {
     LoadCue(EngineCue),
-    FireNext,
+    FireCue(u32, u32, i64, i64),
     SetAudioDevice(u32),
     Scrub(i64),
     SetNdiOutput(bool),
@@ -68,8 +68,8 @@ impl AppLogic {
                         EngineCommand::LoadCue(cue) => {
                             playlist.load_cue(cue);
                         }
-                        EngineCommand::FireNext => {
-                            playlist.fire_next_cue(ring_a.clone(), ring_b.clone(), blend_factor.clone(), clock.clone(), graphics.clone());
+                        EngineCommand::FireCue(cue_index, transition_ms, in_point, out_point) => {
+                            playlist.fire_cue(cue_index, transition_ms, in_point, out_point, ring_a.clone(), ring_b.clone(), blend_factor.clone(), clock.clone(), graphics.clone());
                         }
                         EngineCommand::SetAudioDevice(index) => {
                             println!("M-Playlist [LOGIC]: Changing Audio Device to index {}", index);

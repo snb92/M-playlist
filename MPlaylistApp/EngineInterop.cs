@@ -38,11 +38,11 @@ namespace MPlaylistApp
                 var ffiCue = new FfiCue
                 {
                     FilePath = ptr,
-                    InPointHnsecs = model.InPointHnsecs,
-                    OutPointHnsecs = model.OutPointHnsecs,
+                    InPointHnsecs = (long)(model.InPoint * 10000000.0),
+                    OutPointHnsecs = (long)(model.OutPoint * 10000000.0),
                     IsLooping = (byte)(model.IsLooping ? 1 : 0),
                     HoldLastFrame = (byte)(model.HoldLastFrame ? 1 : 0),
-                    TransitionDurationHnsecs = model.TransitionDurationHnsecs
+                    TransitionDurationHnsecs = (long)(model.TransitionDuration * 10000000.0)
                 };
                 mplaylist_load_cue(ffiCue);
             }
@@ -82,7 +82,7 @@ namespace MPlaylistApp
         }
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        public static extern bool mplaylist_fire_next();
+        public static extern bool mplaylist_fire_cue(uint cue_index, uint transition_ms, long in_point_hnsecs, long out_point_hnsecs);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern uint mplaylist_get_audio_device_count();

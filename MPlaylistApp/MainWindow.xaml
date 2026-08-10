@@ -89,11 +89,11 @@
                             <TextBlock Text="{Binding Title}" FontWeight="Bold"/>
                             <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
                                 <TextBlock Text="In:" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                                <TextBox Text="{Binding InPointHnsecs, UpdateSourceTrigger=PropertyChanged}" Width="50" Margin="0,0,10,0"/>
+                                <TextBox Text="{Binding InPoint, UpdateSourceTrigger=PropertyChanged}" Width="50" Margin="0,0,10,0"/>
                                 <TextBlock Text="Out:" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                                <TextBox Text="{Binding OutPointHnsecs, UpdateSourceTrigger=PropertyChanged}" Width="50" Margin="0,0,10,0"/>
+                                <TextBox Text="{Binding OutPoint, UpdateSourceTrigger=PropertyChanged}" Width="50" Margin="0,0,10,0"/>
                                 <TextBlock Text="Trans:" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                                <TextBox Text="{Binding TransitionDurationHnsecs, UpdateSourceTrigger=PropertyChanged}" Width="40"/>
+                                <TextBox Text="{Binding TransitionDuration, UpdateSourceTrigger=PropertyChanged}" Width="40"/>
                             </StackPanel>
                         </StackPanel>
                     </DataTemplate>
