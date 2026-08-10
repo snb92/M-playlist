@@ -30,7 +30,7 @@ namespace MPlaylistApp
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern bool mplaylist_load_cue(FfiCue cue);
 
-        public static void LoadCueToEngine(CueModel model)
+        public static void LoadCueToEngine(MediaCue model)
         {
             IntPtr ptr = Marshal.StringToCoTaskMemUTF8(model.FilePath);
             try
@@ -38,8 +38,8 @@ namespace MPlaylistApp
                 var ffiCue = new FfiCue
                 {
                     FilePath = ptr,
-                    InPointHnsecs = (long)(model.InPoint * 10000000.0),
-                    OutPointHnsecs = (long)(model.OutPoint * 10000000.0),
+                    InPointHnsecs = (long)model.InPointHNS,
+                    OutPointHnsecs = (long)model.OutPointHNS,
                     IsLooping = (byte)(model.IsLooping ? 1 : 0),
                     HoldLastFrame = (byte)(model.HoldLastFrame ? 1 : 0),
                     TransitionDurationHnsecs = (long)(model.TransitionDuration * 10000000.0)

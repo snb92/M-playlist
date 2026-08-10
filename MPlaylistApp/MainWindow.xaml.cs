@@ -13,28 +13,20 @@ namespace MPlaylistApp
     {
         private DispatcherTimer? _uiTimer;
         private bool _isUserScrubbing = false;
-        private ObservableCollection<CueModel> _playlist = new ObservableCollection<CueModel>();
+        private ObservableCollection<MediaCue> _playlist = new ObservableCollection<MediaCue>();
         private VideoHwndHost? _videoSurface;
+        private FileStateMonitor? _fileMonitor;
 
         public MainWindow()
         {
             InitializeComponent();
             PlaylistUI.ItemsSource = _playlist;
-            _playlist.CollectionChanged += Playlist_CollectionChanged;
+            _fileMonitor = new FileStateMonitor(_playlist);
             this.Loaded += MainWindow_Loaded;
             this.Closed += MainWindow_Closed;
         }
 
-        private void Playlist_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
-        {
-            if (e.OldItems != null)
-            {
-                foreach (CueModel oldCue in e.OldItems)
-                {
-                    oldCue.Dispose();
-                }
-            }
-        }
+
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
@@ -43,6 +35,8 @@ namespace MPlaylistApp
             VideoContainer.SizeChanged += (s, args) => {
                 TriggerVideoResize();
             };
+
+            ComboEndBehavior.ItemsSource = Enum.GetValues(typeof(EndBehavior));
 
             var audioDevices = EngineInterop.GetAudioDevices();
             AudioDeviceCombo.ItemsSource = audioDevices;
@@ -131,7 +125,7 @@ namespace MPlaylistApp
             {
                 foreach (string file in openFileDialog.FileNames)
                 {
-                    var cue = new CueModel
+                    var cue = new MediaCue
                     {
                         FilePath = file,
                         Title = Path.GetFileNameWithoutExtension(file)
@@ -152,7 +146,7 @@ namespace MPlaylistApp
                     string ext = Path.GetExtension(file).ToLower();
                     if (ext == ".mp4" || ext == ".mov" || ext == ".mkv" || ext == ".wmv" || ext == ".wav")
                     {
-                        var cue = new CueModel
+                        var cue = new MediaCue
                         {
                             FilePath = file,
                             Title = Path.GetFileNameWithoutExtension(file)
@@ -174,8 +168,8 @@ namespace MPlaylistApp
 
                 var nextCue = _playlist[targetIndex];
                 uint transMs = (uint)(nextCue.TransitionDuration * 1000);
-                long inHnsecs = (long)(nextCue.InPoint * 10000000.0);
-                long outHnsecs = (long)(nextCue.OutPoint * 10000000.0);
+                long inHnsecs = (long)nextCue.InPointHNS;
+                long outHnsecs = (long)nextCue.OutPointHNS;
 
                 // Fire the CURRENT target
                 EngineInterop.mplaylist_fire_cue((uint)targetIndex, transMs, inHnsecs, outHnsecs);
@@ -198,7 +192,7 @@ namespace MPlaylistApp
         private void MainWindow_Closed(object? sender, EventArgs e)
         {
             // 3.5 Dispose FileSystemWatchers
-            foreach (var cue in _playlist) { cue.Dispose(); }
+            _fileMonitor?.Dispose();
             _playlist.Clear();
 
             // 4. Safely kill the WASAPI and MF threads
@@ -256,6 +250,28 @@ namespace MPlaylistApp
                 (float)SliderBLX.Value, (float)SliderBLY.Value,
                 (float)SliderBRX.Value, (float)SliderBRY.Value
             );
+        }
+
+        private void OnSetInPointClicked(object sender, RoutedEventArgs e)
+        {
+            if (PlaylistUI.SelectedItem is MediaCue selectedCue)
+            {
+                if (EngineInterop.mplaylist_get_diagnostics(out double audioTime, out double videoTime))
+                {
+                    selectedCue.InPointHNS = (ulong)(videoTime * 10000000.0);
+                }
+            }
+        }
+
+        private void OnSetOutPointClicked(object sender, RoutedEventArgs e)
+        {
+            if (PlaylistUI.SelectedItem is MediaCue selectedCue)
+            {
+                if (EngineInterop.mplaylist_get_diagnostics(out double audioTime, out double videoTime))
+                {
+                    selectedCue.OutPointHNS = (ulong)(videoTime * 10000000.0);
+                }
+            }
         }
     }
 }

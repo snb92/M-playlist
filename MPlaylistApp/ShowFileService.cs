@@ -9,16 +9,16 @@ namespace MPlaylistApp
     {
         private static readonly JsonSerializerOptions _options = new JsonSerializerOptions { WriteIndented = true };
 
-        public static async Task SaveShowAsync(string path, ObservableCollection<CueModel> cues)
+        public static async Task SaveShowAsync(string path, ObservableCollection<MediaCue> cues)
         {
             using var stream = File.Create(path);
             await JsonSerializer.SerializeAsync(stream, cues, _options);
         }
 
-        public static async Task<ObservableCollection<CueModel>?> LoadShowAsync(string path)
+        public static async Task<ObservableCollection<MediaCue>?> LoadShowAsync(string path)
         {
             using var stream = File.OpenRead(path);
-            return await JsonSerializer.DeserializeAsync<ObservableCollection<CueModel>>(stream, _options);
+            return await JsonSerializer.DeserializeAsync<ObservableCollection<MediaCue>>(stream, _options);
         }
     }
 }

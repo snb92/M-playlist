@@ -3,6 +3,7 @@
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="350" />
+            <ColumnDefinition Width="280" />
         </Grid.ColumnDefinitions>
 
         <!-- Video Preview Container (Left) -->
@@ -10,8 +11,8 @@
             <!-- VideoHwndHost will be injected here via code-behind -->
         </Border>
 
-        <!-- Control Dashboard (Right) -->
-        <Grid Grid.Column="1" Margin="10">
+        <!-- Control Dashboard (Center: Playlist & Settings) -->
+        <Grid Grid.Column="1" Margin="10,10,0,10">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
@@ -82,23 +83,19 @@
             </StackPanel>
 
             <!-- Playlist -->
-            <ListBox Grid.Row="1" Background="#222222" BorderBrush="#444" Foreground="White" x:Name="PlaylistUI" AllowDrop="True" Drop="PlaylistUI_Drop" Margin="0,0,0,10">
-                <ListBox.ItemTemplate>
+            <ListView Grid.Row="1" Background="#222222" BorderBrush="#444" Foreground="White" x:Name="PlaylistUI" AllowDrop="True" Drop="PlaylistUI_Drop" Margin="0,0,0,10">
+                <ListView.ItemTemplate>
                     <DataTemplate>
                         <StackPanel Orientation="Vertical" Margin="0,5,0,5">
                             <TextBlock Text="{Binding Title}" FontWeight="Bold"/>
                             <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
-                                <TextBlock Text="In:" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                                <TextBox Text="{Binding InPoint, UpdateSourceTrigger=PropertyChanged}" Width="50" Margin="0,0,10,0"/>
-                                <TextBlock Text="Out:" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                                <TextBox Text="{Binding OutPoint, UpdateSourceTrigger=PropertyChanged}" Width="50" Margin="0,0,10,0"/>
-                                <TextBlock Text="Trans:" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                <TextBlock Text="Dur:" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
                                 <TextBox Text="{Binding TransitionDuration, UpdateSourceTrigger=PropertyChanged}" Width="40"/>
                             </StackPanel>
                         </StackPanel>
                     </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
+                </ListView.ItemTemplate>
+            </ListView>
 
             <!-- Bottom Controls -->
             <StackPanel Grid.Row="2" Orientation="Vertical">
@@ -112,5 +109,59 @@
                 <Slider x:Name="TimelineSlider" Maximum="300000000" primitives:Thumb.DragStarted="Timeline_DragStarted" primitives:Thumb.DragCompleted="Timeline_DragCompleted"/>
             </StackPanel>
         </Grid>
+
+        <!-- Cue Inspector (Right) -->
+        <Border Grid.Column="2" Background="#1E1E1E" BorderBrush="#333" BorderThickness="1" Margin="10">
+            <StackPanel DataContext="{Binding SelectedItem, ElementName=PlaylistUI}" Margin="15">
+                <TextBlock Text="CUE INSPECTOR" FontWeight="Bold" Foreground="#888" Margin="0,0,0,15" HorizontalAlignment="Center"/>
+                
+                <!-- CueID & Title -->
+                <TextBlock Text="Cue ID" Foreground="#888" Margin="0,0,0,2"/>
+                <TextBox Text="{Binding CueID, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="White" BorderThickness="0" Padding="5" Margin="0,0,0,10"/>
+                
+                <TextBlock Text="Title" Foreground="#888" Margin="0,0,0,2"/>
+                <TextBox Text="{Binding Title, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="White" BorderThickness="0" Padding="5" Margin="0,0,0,10"/>
+                
+                <!-- End Behavior -->
+                <TextBlock Text="End Behavior" Foreground="#888" Margin="0,0,0,2"/>
+                <ComboBox SelectedItem="{Binding EndBehavior, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="Black" Margin="0,0,0,10" x:Name="ComboEndBehavior"/>
+                
+                <!-- Color Tag -->
+                <TextBlock Text="Color Tag" Foreground="#888" Margin="0,0,0,2"/>
+                <ComboBox SelectedItem="{Binding ColorTag, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="Black" Margin="0,0,0,10">
+                    <ComboBoxItem Content="#444444" />
+                    <ComboBoxItem Content="#FF0000" />
+                    <ComboBoxItem Content="#00FF00" />
+                    <ComboBoxItem Content="#0000FF" />
+                </ComboBox>
+                
+                <!-- Trim Controls -->
+                <TextBlock Text="Trim Points (HNS)" Foreground="#888" Margin="0,0,0,2"/>
+                <Grid Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    
+                    <Button Grid.Row="0" Grid.Column="0" Content=" Set In to Playhead " Click="OnSetInPointClicked" Background="#333" Foreground="White" Padding="5,2" Margin="0,0,5,5"/>
+                    <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding InPointHNS, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="White" BorderThickness="0" Padding="5" Margin="0,0,0,5"/>
+                    
+                    <Button Grid.Row="1" Grid.Column="0" Content=" Set Out to Playhead " Click="OnSetOutPointClicked" Background="#333" Foreground="White" Padding="5,2"/>
+                    <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding OutPointHNS, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="White" BorderThickness="0" Padding="5"/>
+                </Grid>
+                
+                <!-- Volume -->
+                <TextBlock Text="Volume (dB)" Foreground="#888" Margin="0,0,0,2"/>
+                <Slider Value="{Binding VolumeDb, UpdateSourceTrigger=PropertyChanged}" Minimum="-48" Maximum="12" TickFrequency="1" IsSnapToTickEnabled="True" Margin="0,0,0,10"/>
+                
+                <!-- Notes -->
+                <TextBlock Text="Notes" Foreground="#888" Margin="0,0,0,2"/>
+                <TextBox Text="{Binding Notes, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="White" BorderThickness="0" Padding="5" TextWrapping="Wrap" AcceptsReturn="True" Height="80"/>
+            </StackPanel>
+        </Border>
     </Grid>
 </Window>
