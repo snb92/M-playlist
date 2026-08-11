@@ -26,6 +26,11 @@ namespace MPlaylistApp
         private double _volumeDb = 0.0;
         private bool _isActivePlaying = false;
         
+        // Phase 7 O(1) Routing Support
+        public string TargetCueID { get; set; } = string.Empty;
+        public int TargetLoopCount { get; set; } = 0;
+        public int CurrentLoopCount { get; set; } = 0;
+        
         // FFI interop mapping (previously bound directly from UI in CueModel)
         private long _transitionDurationHnsecs;
         private double _transitionDuration;

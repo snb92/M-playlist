@@ -210,3 +210,7 @@ This file contains a timestamped log of all findings, decisions, validations, an
 - **[2026-08-11] FINDING / DECISION:** Eradicated Swapchain Coupling; locked DX11 and NDI backbuffers to immutable 1080p.
 - **IMPACT:** Resolves sub-SD broadcast blurring caused by dynamic UI resizing. NDI stream always maintains 1920x1080 resolution.
 - **RESOLUTION:** Implemented Phase 6 Path B. Initialized Direct2D and DirectWrite. Render target locked to 1920x1080. Added zero-copy Direct2D typography pass immediately after DX11 video pass in ender_composited.
+
+- **FINDING / DECISION (2026-08-11):** UI Thread DispatcherTimer poses a thermodynamic risk to execution timing.
+- **IMPACT:** Garbage Collection or layout passes on the WPF thread can delay FFI triggers, missing crossfade out-points.
+- **RESOLUTION:** Implemented Phase 7. Built EngineConductor.cs, moving macro-state loop to a ThreadPriority.Highest background thread. UI thread reduced to a loose telemetry observer.

@@ -12,12 +12,12 @@ namespace MPlaylistApp
     public partial class MainWindow : Window
     {
         private DispatcherTimer? _uiTimer;
+        private EngineConductor _conductor;
         private bool _isUserScrubbing = false;
         private ObservableCollection<MediaCue> _playlist = new ObservableCollection<MediaCue>();
         private VideoHwndHost? _videoSurface;
         private FileStateMonitor? _fileMonitor;
         private MediaCue? _activePlayingCue;
-        private DateTime _lastTransitionTime = DateTime.MinValue;
         private bool _isPaused = false;
 
         public MainWindow()
@@ -25,6 +25,25 @@ namespace MPlaylistApp
             InitializeComponent();
             PlaylistUI.ItemsSource = _playlist;
             _fileMonitor = new FileStateMonitor(_playlist);
+            
+            _conductor = new EngineConductor();
+            _conductor.OnCueActivated += (cue) => 
+            {
+                Dispatcher.Invoke(() => 
+                {
+                    _activePlayingCue = cue;
+                    int idx = _playlist.IndexOf(cue);
+                    if (idx >= 0) {
+                        PlaylistUI.SelectedIndex = idx;
+                        StatusText.Text = $"Playing Cue #{idx + 1}";
+                    }
+                });
+            };
+            
+            _playlist.CollectionChanged += (s, e) => {
+                _conductor.UpdatePlaylistTopology(_playlist);
+            };
+
             this.Loaded += MainWindow_Loaded;
             this.Closed += MainWindow_Closed;
         }
@@ -56,53 +75,24 @@ namespace MPlaylistApp
                     StatusText.Text = "System Armed. DXGI Bound.";
                     StatusText.Foreground = System.Windows.Media.Brushes.LightGreen;
                     
-                    // Start UI polling for timecode
-                    _uiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
+                    _conductor.UpdatePlaylistTopology(_playlist);
+                    _conductor.Start();
+                    
+                    // Start UI polling for timecode (loose 33ms interval purely for UI updates)
+                    _uiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
                     _uiTimer.Tick += (s, args) =>
                     {
-                        // Acoustic Telemetry Probe
-                        if (EngineInterop.mplaylist_get_diagnostics(out double audioTime, out double videoTime))
+                        double audioTime = _conductor.CurrentAudioTime;
+                        double videoTime = _conductor.CurrentVideoTime;
+                        
+                        EngineInterop.mplaylist_get_audio_telemetry(0, out int occupancy, out int capacity);
+                        double latencyMs = occupancy / 768.0; 
+                        
+                        TimecodeText.Text = $"A: {audioTime:F3}s | V: {videoTime:F3}s | Latency: {latencyMs:F2}ms";
+                        
+                        if (!_isUserScrubbing)
                         {
-                            EngineInterop.mplaylist_get_audio_telemetry(0, out int occupancy, out int capacity);
-                            double latencyMs = occupancy / 768.0; // 16 channels * 48000 Hz / 1000 = 768 floats per ms
-                            
-                            TimecodeText.Text = $"A: {audioTime:F3}s | V: {videoTime:F3}s | Latency: {latencyMs:F2}ms";
-                            Console.WriteLine($"AUDIO BUFFER - Capacity: {capacity} | Occupancy: {occupancy} | Latency: {latencyMs:F2} ms");
-                            
-                            if (!_isUserScrubbing)
-                            {
-                                TimelineSlider.Value = videoTime * 10000000.0; 
-                            }
-                            
-                            // Step 2 & 3: Playhead Monitor Loop and EndBehavior Switch
-                            if (_activePlayingCue != null)
-                            {
-                                ulong currentPlayheadHNS = (ulong)(videoTime * 10000000.0);
-                                if (_activePlayingCue.OutPointHNS > 0 && currentPlayheadHNS >= _activePlayingCue.OutPointHNS)
-                                {
-                                    // Step 4: The Debounce Lock
-                                    if ((DateTime.Now - _lastTransitionTime).TotalMilliseconds > 300)
-                                    {
-                                        _lastTransitionTime = DateTime.Now;
-                                        
-                                        switch (_activePlayingCue.EndBehavior)
-                                        {
-                                            case EndBehavior.Stop:
-                                                EngineInterop.mplaylist_stop();
-                                                _activePlayingCue.IsActivePlaying = false;
-                                                _activePlayingCue = null;
-                                                break;
-                                            case EndBehavior.LoopForever:
-                                                EngineInterop.mplaylist_scrub_to((long)_activePlayingCue.InPointHNS);
-                                                break;
-                                            default:
-                                                // Default / Next Cue logic
-                                                OnPlayClicked(this, new RoutedEventArgs());
-                                                break;
-                                        }
-                                    }
-                                }
-                            }
+                            TimelineSlider.Value = videoTime * 10000000.0; 
                         }
                     };
                     _uiTimer.Start();
@@ -226,6 +216,9 @@ namespace MPlaylistApp
                 EngineInterop.mplaylist_fire_cue((uint)targetIndex, transMs, inHnsecs, outHnsecs);
                 EngineInterop.mplaylist_set_volume_db((float)nextCue.VolumeDb);
                 
+                // Inform the Conductor of the manual override
+                _conductor.SetActiveCue(nextCue);
+                
                 // POST-Advance the UI selection
                 if (_playlist.Count > 0)
                 {
@@ -233,9 +226,8 @@ namespace MPlaylistApp
                 }
                 StatusText.Text = $"Playing Cue #{targetIndex + 1}";
                 
-                // Assign active cue and set debounce
+                // Assign active cue and remove debounce
                 _activePlayingCue = nextCue;
-                _lastTransitionTime = DateTime.Now;
                 _isPaused = false;
             }
         }
@@ -258,6 +250,7 @@ namespace MPlaylistApp
                 _activePlayingCue.IsActivePlaying = false;
                 _activePlayingCue = null;
             }
+            _conductor.SetActiveCue(null);
             _isPaused = false;
             StatusText.Text = "Stopped";
         }
@@ -270,6 +263,7 @@ namespace MPlaylistApp
 
         private void MainWindow_Closed(object? sender, EventArgs e)
         {
+            _conductor.Stop();
             // 3.5 Dispose FileSystemWatchers
             _fileMonitor?.Dispose();
             _playlist.Clear();
