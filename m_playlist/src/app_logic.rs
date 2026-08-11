@@ -6,7 +6,6 @@ use crate::playlist::Playlist;
 use crate::audio_ring::AudioRingBuffer;
 use crate::clock::MasterClock;
 use crate::graphics::Dx11Compositor;
-use crate::ndi_transmitter::NdiTransmitter;
 
 #[derive(Clone)]
 pub struct EngineCue {
@@ -23,9 +22,13 @@ pub enum EngineCommand {
     FireCue(u32, u32, i64, i64),
     SetAudioDevice(u32),
     Scrub(i64),
-    SetNdiOutput(bool),
     SetGeometry([f32; 8]),
     Resize(u32, u32),
+    SetVolume(f32),
+    Pause,
+    Resume,
+    Stop,
+    SetAudioRoute { deck_id: i32, in_ch: i32, out_bus: i32, gain_db: f32 },
     Shutdown,
 }
 
@@ -47,7 +50,6 @@ impl AppLogic {
         
         let thread = thread::spawn(move || {
             let mut playlist = Playlist::new();
-            let mut ndi_transmitter: Option<NdiTransmitter> = None;
             println!("M-Playlist [LOGIC]: App Logic Loop Started.");
 
             let frame_duration = std::time::Duration::from_nanos(16_666_666);
@@ -58,6 +60,101 @@ impl AppLogic {
                 [ 1.0,-1.0, 0.0, 0.0],  // bottom_right
             ];
             
+            // STRIKE 1 & 3: Load NDI dynamically and spin up Sender thread
+            match crate::ndi_ffi::NdiLibrary::load() {
+                Ok(ndi) => unsafe {
+                    println!("M-Playlist [NDI]: NdiLibrary::load() SUCCESS");
+                    if (ndi.NDIlib_initialize)() {
+                        println!("M-Playlist [NDI]: Processing.NDI.Lib.x64.dll initialized successfully!");
+                        
+                        let create_desc = crate::ndi_ffi::NDIlib_send_create_t {
+                            p_ndi_name: b"M-Playlist Native\0".as_ptr() as *const i8,
+                            p_groups: b"MySandbox\0".as_ptr() as *const i8, // ISOLATED private group
+                            clock_video: false,
+                            clock_audio: false,
+                        };
+                        let instance = (ndi.NDIlib_send_create)(&create_desc);
+                        
+                        if instance.ptr.is_null() {
+                            println!("M-Playlist [NDI]: FATAL ERROR - NDIlib_send_create returned NULL pointer!");
+                        } else {
+                            println!("M-Playlist [NDI]: NDI Sender created successfully!");
+                        }
+                        
+                        let (ndi_tx, ndi_rx) = std::sync::mpsc::sync_channel::<crate::ndi_transmitter::NdiPayload>(16);
+                        
+                        let (video_grave_tx, video_grave_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(16);
+                        let (audio_grave_tx, audio_grave_rx) = std::sync::mpsc::sync_channel::<Vec<f32>>(128);
+                        
+                        let mut gfx_ndi = graphics.ndi_tx.lock().unwrap();
+                        *gfx_ndi = Some(ndi_tx.clone());
+                        
+                        let mut gfx_grave = graphics.video_grave_rx.lock().unwrap();
+                        *gfx_grave = Some(video_grave_rx);
+                        
+                        let mut aud_ndi = audio_engine.ndi_tx.lock().unwrap();
+                        *aud_ndi = Some(ndi_tx);
+                        
+                        let mut aud_grave = audio_engine.audio_grave_rx.lock().unwrap();
+                        *aud_grave = Some(audio_grave_rx);
+                        
+                        std::thread::spawn(move || {
+                            println!("M-Playlist [NDI]: Worker thread started.");
+                            while let Ok(payload) = ndi_rx.recv() {
+                                match payload {
+                                    crate::ndi_transmitter::NdiPayload::Video(mut frame) => {
+                                        let video_data = crate::ndi_ffi::NDIlib_video_frame_v2_t {
+                                            xres: frame.width,
+                                            yres: frame.height,
+                                            FourCC: crate::ndi_ffi::NDIlib_FourCC_video_type_BGRA,
+                                            frame_rate_N: 60000,
+                                            frame_rate_D: 1000,
+                                            picture_aspect_ratio: frame.width as f32 / frame.height as f32,
+                                            frame_format_type: 1, // progressive
+                                            timecode: 0,
+                                            p_data: frame.data.as_ptr() as *mut u8,
+                                            line_stride_in_bytes: frame.stride,
+                                            p_metadata: std::ptr::null(),
+                                            timestamp: 0,
+                                        };
+                                        (ndi.NDIlib_send_send_video_v2)(instance, &video_data);
+                                        
+                                        // RECYCLE
+                                        frame.data.clear();
+                                        let _ = video_grave_tx.try_send(frame.data);
+                                    }
+                                    crate::ndi_transmitter::NdiPayload::Audio(mut data) => {
+                                        let no_channels = 16;
+                                        let no_samples = (data.len() / no_channels) as i32;
+                                        
+                                        let audio_data = crate::ndi_ffi::NDIlib_audio_frame_v2_t {
+                                            sample_rate: 48000,
+                                            no_channels: no_channels as i32, // STRICT 16-CHANNEL MATRIX OUTPUT
+                                            no_samples,
+                                            timecode: 0,
+                                            p_data: data.as_mut_ptr(),
+                                            channel_stride_in_bytes: no_samples * 4, // 4 bytes per float
+                                            p_metadata: std::ptr::null(),
+                                            timestamp: 0,
+                                        };
+                                        (ndi.NDIlib_send_send_audio_v2)(instance, &audio_data);
+                                        
+                                        // RECYCLE
+                                        data.clear();
+                                        let _ = audio_grave_tx.try_send(data);
+                                    }
+                                }
+                            }
+                        });
+                    } else {
+                        println!("M-Playlist [NDI]: FATAL ERROR - NDIlib_initialize() returned FALSE!");
+                    }
+                },
+                Err(e) => {
+                    eprintln!("M-Playlist [NDI]: Failed to load NDI library: {}", e);
+                }
+            }
+
             // Unified Broadcast Game Loop
             loop {
                 let start_time = std::time::Instant::now();
@@ -78,24 +175,8 @@ impl AppLogic {
                         }
                         EngineCommand::Scrub(target_hnsecs) => {
                             playlist.scrub(target_hnsecs);
-                        }
-                        EngineCommand::SetNdiOutput(enabled) => {
-                            playlist.ndi_enabled = enabled;
-                            if enabled {
-                                if ndi_transmitter.is_none() {
-                                    if let Some(transmitter) = NdiTransmitter::new() {
-                                        let mut gfx_ndi = graphics.ndi_tx.lock().unwrap();
-                                        *gfx_ndi = Some(transmitter.tx.clone());
-                                        ndi_transmitter = Some(transmitter);
-                                        println!("M-Playlist [LOGIC]: NDI Output enabled.");
-                                    }
-                                }
-                            } else {
-                                ndi_transmitter = None;
-                                let mut gfx_ndi = graphics.ndi_tx.lock().unwrap();
-                                *gfx_ndi = None;
-                                println!("M-Playlist [LOGIC]: NDI Output disabled.");
-                            }
+                            ring_a.flush();
+                            ring_b.flush();
                         }
                         EngineCommand::SetGeometry(c) => {
                             geometry_state = [
@@ -111,6 +192,26 @@ impl AppLogic {
                             } else {
                                 println!("M-Playlist [RENDER INFO]: Resized Swapchain to {}x{}", w, h);
                             }
+                        }
+                        EngineCommand::Pause => {
+                            clock.is_paused.store(true, std::sync::atomic::Ordering::Release);
+                            println!("M-Playlist [LOGIC]: Master Clock Paused.");
+                        }
+                        EngineCommand::Resume => {
+                            clock.is_paused.store(false, std::sync::atomic::Ordering::Release);
+                            println!("M-Playlist [LOGIC]: Master Clock Resumed.");
+                        }
+                        EngineCommand::Stop => {
+                            playlist.stop();
+                            ring_a.flush();
+                            ring_b.flush();
+                        }
+                        EngineCommand::SetVolume(amp) => {
+                            audio_engine.master_volume.store(amp.to_bits(), std::sync::atomic::Ordering::Relaxed);
+                        }
+                        EngineCommand::SetAudioRoute { deck_id, in_ch, out_bus, gain_db } => {
+                            let deck_ring = if deck_id == 0 { &ring_a } else { &ring_b };
+                            deck_ring.set_route(in_ch as usize, out_bus as usize, gain_db);
                         }
                         EngineCommand::Shutdown => {
                             println!("M-Playlist [LOGIC]: Shutting down Playlist.");

@@ -5,6 +5,8 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 pub static SYNC_OFFSET_US: AtomicI64 = AtomicI64::new(80_000);
 // Global tracker for the last decoded video frame
 pub static CURRENT_VIDEO_TIME_US: AtomicU64 = AtomicU64::new(0);
+// Global toggle for NDI broadcast
+pub static NDI_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 use crate::audio_ring::AudioRingBuffer;
 use crate::audio_wasapi::WasapiEngine;
@@ -39,8 +41,8 @@ static ENGINE_STATE: OnceLock<Mutex<EngineState>> = OnceLock::new();
 fn get_state() -> &'static Mutex<EngineState> {
     ENGINE_STATE.get_or_init(|| {
         Mutex::new(EngineState {
-            ring_a: Arc::new(AudioRingBuffer::new(48000 * 2 * 10)), // 10 seconds buffer at 48k stereo
-            ring_b: Arc::new(AudioRingBuffer::new(48000 * 2 * 10)), // 10 seconds buffer at 48k stereo
+            ring_a: Arc::new(AudioRingBuffer::new(153600)), // 200ms strict capacity (16 channels)
+            ring_b: Arc::new(AudioRingBuffer::new(153600)), // 200ms strict capacity (16 channels)
             blend_factor: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             clock: Arc::new(MasterClock::new(48000)),
             wasapi: None,
@@ -177,6 +179,45 @@ pub extern "C" fn mplaylist_fire_cue(cue_index: u32, transition_ms: u32, in_poin
 }
 
 #[no_mangle]
+pub extern "C" fn mplaylist_stop() -> bool {
+    let state = get_state().lock().unwrap();
+    if let Some(logic) = state.app_logic.as_ref() {
+        let _ = logic.tx.send(EngineCommand::Stop);
+        return true;
+    }
+    false
+}
+
+#[no_mangle]
+pub extern "C" fn mplaylist_pause() {
+    let state = get_state().lock().unwrap();
+    if let Some(logic) = state.app_logic.as_ref() {
+        let _ = logic.tx.send(EngineCommand::Pause);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn mplaylist_resume() {
+    let state = get_state().lock().unwrap();
+    if let Some(logic) = state.app_logic.as_ref() {
+        let _ = logic.tx.send(EngineCommand::Resume);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn mplaylist_set_volume_db(db: f32) {
+    let mut amplitude = 10_f32.powf(db / 20.0);
+    if db <= -60.0 {
+        amplitude = 0.0;
+    }
+    
+    let state = get_state().lock().unwrap();
+    if let Some(logic) = state.app_logic.as_ref() {
+        let _ = logic.tx.send(EngineCommand::SetVolume(amplitude));
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn mplaylist_set_audio_device(index: u32) {
     let state = get_state().lock().unwrap();
     if let Some(logic) = state.app_logic.as_ref() {
@@ -285,11 +326,8 @@ pub extern "C" fn mplaylist_get_audio_device_name(index: u32, buffer: *mut u8, m
 }
 
 #[no_mangle]
-pub extern "C" fn mplaylist_set_ndi_output(enabled: u8) {
-    let state = get_state().lock().unwrap();
-    if let Some(logic) = state.app_logic.as_ref() {
-        let _ = logic.tx.send(EngineCommand::SetNdiOutput(enabled != 0));
-    }
+pub extern "C" fn mplaylist_set_ndi_enabled(enabled: bool) {
+    NDI_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
 #[no_mangle]
@@ -312,5 +350,25 @@ pub extern "C" fn mplaylist_set_geometry(
         let _ = logic.tx.send(EngineCommand::SetGeometry([
             tl_x, tl_y, tr_x, tr_y, bl_x, bl_y, br_x, br_y,
         ]));
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn mplaylist_get_audio_telemetry(deck_id: i32, out_occupancy: *mut i32, out_capacity: *mut i32) {
+    if out_occupancy.is_null() || out_capacity.is_null() { return; }
+    if let Ok(state) = get_state().try_lock() {
+        let ring = if deck_id == 0 { &state.ring_a } else { &state.ring_b };
+        unsafe {
+            *out_occupancy = ring.get_occupancy() as i32;
+            *out_capacity = ring.get_capacity() as i32;
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn mplaylist_set_audio_route(deck_id: i32, in_ch: i32, out_bus: i32, gain_db: f32) {
+    let state = get_state().lock().unwrap();
+    if let Some(logic) = state.app_logic.as_ref() {
+        let _ = logic.tx.send(EngineCommand::SetAudioRoute { deck_id, in_ch, out_bus, gain_db });
     }
 }

@@ -1,167 +1,220 @@
-<Window Background="#121212" Height="720" Title="M-Playlist Native Engine" Width="1280" WindowStartupLocation="CenterScreen" x:Class="MPlaylistApp.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:local="clr-namespace:MPlaylistApp" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:primitives="clr-namespace:System.Windows.Controls.Primitives;assembly=PresentationFramework">
-    <Grid Background="#121212">
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*" />
-            <ColumnDefinition Width="350" />
-            <ColumnDefinition Width="280" />
-        </Grid.ColumnDefinitions>
+<Window x:Class="MPlaylistApp.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:MPlaylistApp"
+        xmlns:primitives="clr-namespace:System.Windows.Controls.Primitives;assembly=PresentationFramework"
+        Title="M-Playlist Native Engine (Broadcast Mode)" Height="760" Width="1280" 
+        WindowStartupLocation="CenterScreen" 
+        Background="#121212" Foreground="White">
+    
+    <Window.Resources>
+        <local:TimecodeConverter x:Key="TimecodeConverter"/>
+    </Window.Resources>
 
-        <!-- Video Preview Container (Left) -->
-        <Border x:Name="VideoContainer" Background="Black" Margin="10" Grid.Column="0">
-            <!-- VideoHwndHost will be injected here via code-behind -->
-        </Border>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/> <!-- Top Hardware Settings -->
+            <RowDefinition Height="*"/>    <!-- Main Workspace -->
+        </Grid.RowDefinitions>
 
-        <!-- Control Dashboard (Center: Playlist & Settings) -->
-        <Grid Grid.Column="1" Margin="10,10,0,10">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-
-            <!-- A/V Sync Diagnostic & Audio Out -->
-            <StackPanel Grid.Row="0" Margin="0,0,0,10">
-                <TextBlock FontFamily="Consolas" FontSize="18" FontWeight="Bold" Foreground="#00FF00" HorizontalAlignment="Center" Margin="0,0,0,10" Text="A: 0.000s | V: 0.000s" x:Name="TimecodeText"/>
-                
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,10">
-                    <TextBlock FontSize="12" Foreground="#AAAAAA" Text="Hardware Delay: " VerticalAlignment="Center"/>
-                    <Slider IsSnapToTickEnabled="True" Maximum="500" Minimum="-500" TickFrequency="10" Value="80" ValueChanged="OnSyncSliderChanged" Width="120" x:Name="SyncSlider"/>
-                    <TextBlock FontSize="12" Foreground="#AAAAAA" Margin="5,0,0,0" Text="80 ms" VerticalAlignment="Center" Width="45" x:Name="SyncLabel"/>
-                </StackPanel>
-
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,10">
-                    <TextBlock Text="Audio Out:" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,10,0"/>
+        <!-- TOP: Hardware Settings Expander -->
+        <Expander Grid.Row="0" Header="[ HARDWARE &amp; NDI CONFIGURATION ]" Foreground="#AAAAAA" BorderBrush="#333" BorderThickness="0,0,0,1" Padding="10">
+            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                <StackPanel Margin="0,0,30,0">
+                    <TextBlock Text="Audio Out:" Foreground="Gray" Margin="0,0,0,5"/>
                     <ComboBox x:Name="AudioDeviceCombo" Width="200" SelectionChanged="AudioDeviceCombo_SelectionChanged"/>
                 </StackPanel>
-
-                <CheckBox x:Name="NdiBroadcastCheckBox" Content="Enable NDI Broadcast" Foreground="White" HorizontalAlignment="Center" Margin="0,0,0,10" Checked="NdiBroadcastCheckBox_Checked" Unchecked="NdiBroadcastCheckBox_Unchecked"/>
-
-                <!-- Output Corner Pinning -->
-                <TextBlock Text="Output Corner Pinning" Foreground="Gray" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,5,0,5"/>
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="35"/>
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
-                        <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
-                    </Grid.RowDefinitions>
-                    <TextBlock Grid.Row="0" Grid.Column="0" Text="TL X" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                    <Slider x:Name="SliderTLX" Grid.Row="0" Grid.Column="1" Minimum="-2" Maximum="2" Value="-1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
-                    <TextBlock x:Name="LblTLX" Grid.Row="0" Grid.Column="2" Text="-1.00" Foreground="Gray" VerticalAlignment="Center"/>
-
-                    <TextBlock Grid.Row="1" Grid.Column="0" Text="TL Y" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                    <Slider x:Name="SliderTLY" Grid.Row="1" Grid.Column="1" Minimum="-2" Maximum="2" Value="1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
-                    <TextBlock x:Name="LblTLY" Grid.Row="1" Grid.Column="2" Text="1.00" Foreground="Gray" VerticalAlignment="Center"/>
-
-                    <TextBlock Grid.Row="2" Grid.Column="0" Text="TR X" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                    <Slider x:Name="SliderTRX" Grid.Row="2" Grid.Column="1" Minimum="-2" Maximum="2" Value="1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
-                    <TextBlock x:Name="LblTRX" Grid.Row="2" Grid.Column="2" Text="1.00" Foreground="Gray" VerticalAlignment="Center"/>
-
-                    <TextBlock Grid.Row="3" Grid.Column="0" Text="TR Y" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                    <Slider x:Name="SliderTRY" Grid.Row="3" Grid.Column="1" Minimum="-2" Maximum="2" Value="1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
-                    <TextBlock x:Name="LblTRY" Grid.Row="3" Grid.Column="2" Text="1.00" Foreground="Gray" VerticalAlignment="Center"/>
-
-                    <TextBlock Grid.Row="4" Grid.Column="0" Text="BL X" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                    <Slider x:Name="SliderBLX" Grid.Row="4" Grid.Column="1" Minimum="-2" Maximum="2" Value="-1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
-                    <TextBlock x:Name="LblBLX" Grid.Row="4" Grid.Column="2" Text="-1.00" Foreground="Gray" VerticalAlignment="Center"/>
-
-                    <TextBlock Grid.Row="5" Grid.Column="0" Text="BL Y" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                    <Slider x:Name="SliderBLY" Grid.Row="5" Grid.Column="1" Minimum="-2" Maximum="2" Value="-1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
-                    <TextBlock x:Name="LblBLY" Grid.Row="5" Grid.Column="2" Text="-1.00" Foreground="Gray" VerticalAlignment="Center"/>
-
-                    <TextBlock Grid.Row="6" Grid.Column="0" Text="BR X" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                    <Slider x:Name="SliderBRX" Grid.Row="6" Grid.Column="1" Minimum="-2" Maximum="2" Value="1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
-                    <TextBlock x:Name="LblBRX" Grid.Row="6" Grid.Column="2" Text="1.00" Foreground="Gray" VerticalAlignment="Center"/>
-
-                    <TextBlock Grid.Row="7" Grid.Column="0" Text="BR Y" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                    <Slider x:Name="SliderBRY" Grid.Row="7" Grid.Column="1" Minimum="-2" Maximum="2" Value="-1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
-                    <TextBlock x:Name="LblBRY" Grid.Row="7" Grid.Column="2" Text="-1.00" Foreground="Gray" VerticalAlignment="Center"/>
-                </Grid>
-            </StackPanel>
-
-            <!-- Playlist -->
-            <ListView Grid.Row="1" Background="#222222" BorderBrush="#444" Foreground="White" x:Name="PlaylistUI" AllowDrop="True" Drop="PlaylistUI_Drop" Margin="0,0,0,10">
-                <ListView.ItemTemplate>
-                    <DataTemplate>
-                        <StackPanel Orientation="Vertical" Margin="0,5,0,5">
-                            <TextBlock Text="{Binding Title}" FontWeight="Bold"/>
-                            <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
-                                <TextBlock Text="Dur:" Foreground="Gray" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                                <TextBox Text="{Binding TransitionDuration, UpdateSourceTrigger=PropertyChanged}" Width="40"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </DataTemplate>
-                </ListView.ItemTemplate>
-            </ListView>
-
-            <!-- Bottom Controls -->
-            <StackPanel Grid.Row="2" Orientation="Vertical">
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,10">
-                    <Button Background="#333" Click="OnAddCueClicked" Content="Add Cues" Foreground="White" Height="40" Margin="0,0,10,0" Width="100"/>
-                    <Button Background="#1E90FF" Click="OnFireNextClicked" Content="FIRE NEXT" FontWeight="Bold" Foreground="White" Height="40" Width="120"/>
+                
+                <StackPanel Margin="0,0,30,0">
+                    <TextBlock FontSize="12" Foreground="#AAAAAA" Text="Hardware Delay: " Margin="0,0,0,5"/>
+                    <StackPanel Orientation="Horizontal">
+                        <Slider x:Name="SyncSlider" IsSnapToTickEnabled="True" Maximum="500" Minimum="-500" TickFrequency="10" Value="80" ValueChanged="OnSyncSliderChanged" Width="120" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="SyncLabel" FontSize="12" Foreground="#AAAAAA" Margin="10,0,0,0" Text="80 ms" VerticalAlignment="Center"/>
+                    </StackPanel>
                 </StackPanel>
-                
-                <TextBlock x:Name="StatusText" Text="Waiting for Sync..." Foreground="#00FF00" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,10"/>
-                
-                <Slider x:Name="TimelineSlider" Maximum="300000000" primitives:Thumb.DragStarted="Timeline_DragStarted" primitives:Thumb.DragCompleted="Timeline_DragCompleted"/>
-            </StackPanel>
-        </Grid>
 
-        <!-- Cue Inspector (Right) -->
-        <Border Grid.Column="2" Background="#1E1E1E" BorderBrush="#333" BorderThickness="1" Margin="10">
-            <StackPanel DataContext="{Binding SelectedItem, ElementName=PlaylistUI}" Margin="15">
-                <TextBlock Text="CUE INSPECTOR" FontWeight="Bold" Foreground="#888" Margin="0,0,0,15" HorizontalAlignment="Center"/>
+                <StackPanel Margin="0,0,30,0">
+                    <CheckBox x:Name="NdiBroadcastCheckBox" Content="Enable NDI Broadcast" Foreground="White" Checked="NdiBroadcastCheckBox_Checked" Unchecked="NdiBroadcastCheckBox_Unchecked" VerticalAlignment="Center" Margin="0,20,0,0"/>
+                </StackPanel>
+
+                <StackPanel>
+                    <TextBlock Text="Output Corner Pinning" Foreground="Gray" FontWeight="Bold" Margin="0,0,0,5"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/><ColumnDefinition Width="60"/><ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/><ColumnDefinition Width="60"/><ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="TL X" Foreground="Gray" Margin="0,0,5,0"/>
+                        <Slider x:Name="SliderTLX" Grid.Row="0" Grid.Column="1" Minimum="-2" Maximum="2" Value="-1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
+                        <TextBlock x:Name="LblTLX" Grid.Row="0" Grid.Column="2" Text="-1.00" Foreground="Gray" Margin="5,0,15,0"/>
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="TL Y" Foreground="Gray" Margin="0,0,5,0"/>
+                        <Slider x:Name="SliderTLY" Grid.Row="1" Grid.Column="1" Minimum="-2" Maximum="2" Value="1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
+                        <TextBlock x:Name="LblTLY" Grid.Row="1" Grid.Column="2" Text="1.00" Foreground="Gray" Margin="5,0,15,0"/>
+
+                        <TextBlock Grid.Row="0" Grid.Column="3" Text="TR X" Foreground="Gray" Margin="0,0,5,0"/>
+                        <Slider x:Name="SliderTRX" Grid.Row="0" Grid.Column="4" Minimum="-2" Maximum="2" Value="1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
+                        <TextBlock x:Name="LblTRX" Grid.Row="0" Grid.Column="5" Text="1.00" Foreground="Gray" Margin="5,0,15,0"/>
+
+                        <TextBlock Grid.Row="1" Grid.Column="3" Text="TR Y" Foreground="Gray" Margin="0,0,5,0"/>
+                        <Slider x:Name="SliderTRY" Grid.Row="1" Grid.Column="4" Minimum="-2" Maximum="2" Value="1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
+                        <TextBlock x:Name="LblTRY" Grid.Row="1" Grid.Column="5" Text="1.00" Foreground="Gray" Margin="5,0,15,0"/>
+                        
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="BL X" Foreground="Gray" Margin="0,0,5,0"/>
+                        <Slider x:Name="SliderBLX" Grid.Row="2" Grid.Column="1" Minimum="-2" Maximum="2" Value="-1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
+                        <TextBlock x:Name="LblBLX" Grid.Row="2" Grid.Column="2" Text="-1.00" Foreground="Gray" Margin="5,0,15,0"/>
+
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="BL Y" Foreground="Gray" Margin="0,0,5,0"/>
+                        <Slider x:Name="SliderBLY" Grid.Row="3" Grid.Column="1" Minimum="-2" Maximum="2" Value="-1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
+                        <TextBlock x:Name="LblBLY" Grid.Row="3" Grid.Column="2" Text="-1.00" Foreground="Gray" Margin="5,0,15,0"/>
+
+                        <TextBlock Grid.Row="2" Grid.Column="3" Text="BR X" Foreground="Gray" Margin="0,0,5,0"/>
+                        <Slider x:Name="SliderBRX" Grid.Row="2" Grid.Column="4" Minimum="-2" Maximum="2" Value="1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
+                        <TextBlock x:Name="LblBRX" Grid.Row="2" Grid.Column="5" Text="1.00" Foreground="Gray" Margin="5,0,15,0"/>
+
+                        <TextBlock Grid.Row="3" Grid.Column="3" Text="BR Y" Foreground="Gray" Margin="0,0,5,0"/>
+                        <Slider x:Name="SliderBRY" Grid.Row="3" Grid.Column="4" Minimum="-2" Maximum="2" Value="-1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCornerSliderChanged"/>
+                        <TextBlock x:Name="LblBRY" Grid.Row="3" Grid.Column="5" Text="-1.00" Foreground="Gray" Margin="5,0,15,0"/>
+                    </Grid>
+                </StackPanel>
+            </StackPanel>
+        </Expander>
+
+        <!-- MAIN WORKSPACE -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />    <!-- Playlist -->
+                <ColumnDefinition Width="600" />  <!-- Viewport + Transport -->
+                <ColumnDefinition Width="300" />  <!-- Inspector -->
+            </Grid.ColumnDefinitions>
+
+            <!-- LEFT: Playlist -->
+            <Grid Grid.Column="0" Margin="10">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Text="PLAYLIST" FontWeight="Bold" Foreground="#888" Margin="0,0,0,5"/>
                 
-                <!-- CueID & Title -->
-                <TextBlock Text="Cue ID" Foreground="#888" Margin="0,0,0,2"/>
-                <TextBox Text="{Binding CueID, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="White" BorderThickness="0" Padding="5" Margin="0,0,0,10"/>
+                <ListView Grid.Row="1" Background="#222222" BorderBrush="#444" Foreground="White" x:Name="PlaylistUI" AllowDrop="True" Drop="PlaylistUI_Drop" Margin="0,0,0,10">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="Background" Value="Transparent"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsActivePlaying}" Value="True">
+                                    <Setter Property="Background" Value="#8B0000"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Border BorderBrush="{Binding ColorTag}" BorderThickness="4,0,0,0" Padding="5">
+                                <StackPanel Orientation="Vertical">
+                                    <TextBlock Text="{Binding Title}" FontWeight="Bold"/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                                        <TextBlock Text="Dur: " Foreground="Gray" VerticalAlignment="Center"/>
+                                        <!-- Bound with TimecodeConverter -->
+                                        <TextBlock Text="{Binding TransitionDuration, Converter={StaticResource TimecodeConverter}}" Foreground="LightGray" VerticalAlignment="Center" Margin="0,0,15,0"/>
+                                        <TextBlock Text="In: " Foreground="Gray" VerticalAlignment="Center"/>
+                                        <TextBlock Text="{Binding InPointHNS, Converter={StaticResource TimecodeConverter}}" Foreground="LightGray" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
                 
-                <TextBlock Text="Title" Foreground="#888" Margin="0,0,0,2"/>
-                <TextBox Text="{Binding Title, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="White" BorderThickness="0" Padding="5" Margin="0,0,0,10"/>
-                
-                <!-- End Behavior -->
-                <TextBlock Text="End Behavior" Foreground="#888" Margin="0,0,0,2"/>
-                <ComboBox SelectedItem="{Binding EndBehavior, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="Black" Margin="0,0,0,10" x:Name="ComboEndBehavior"/>
-                
-                <!-- Color Tag -->
-                <TextBlock Text="Color Tag" Foreground="#888" Margin="0,0,0,2"/>
-                <ComboBox SelectedItem="{Binding ColorTag, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="Black" Margin="0,0,0,10">
-                    <ComboBoxItem Content="#444444" />
-                    <ComboBoxItem Content="#FF0000" />
-                    <ComboBoxItem Content="#00FF00" />
-                    <ComboBoxItem Content="#0000FF" />
-                </ComboBox>
-                
-                <!-- Trim Controls -->
-                <TextBlock Text="Trim Points (HNS)" Foreground="#888" Margin="0,0,0,2"/>
-                <Grid Margin="0,0,0,10">
+                <Button Grid.Row="2" Background="#333" Click="OnAddCueClicked" Content="+ Add Cues" Foreground="White" Height="40" HorizontalAlignment="Left" Width="100"/>
+            </Grid>
+
+            <!-- CENTER: Viewport & Transport -->
+            <Grid Grid.Column="1" Margin="10,10,0,10">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" FontFamily="Consolas" FontSize="18" FontWeight="Bold" Foreground="#00FF00" HorizontalAlignment="Center" Margin="0,0,0,10" Text="A: 00:00:00:00 | V: 00:00:00:00" x:Name="TimecodeText"/>
+
+                <Border Grid.Row="1" x:Name="VideoContainer" Background="Black" BorderBrush="#333" BorderThickness="1">
+                    <!-- VideoHwndHost injected here -->
+                </Border>
+
+                <Slider Grid.Row="2" x:Name="TimelineSlider" Maximum="300000000" Margin="0,10,0,10" primitives:Thumb.DragStarted="Timeline_DragStarted" primitives:Thumb.DragCompleted="Timeline_DragCompleted"/>
+
+                <!-- Transport Controls -->
+                <Grid Grid.Row="3" Margin="0,5,0,0">
                     <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
                     
-                    <Button Grid.Row="0" Grid.Column="0" Content=" Set In to Playhead " Click="OnSetInPointClicked" Background="#333" Foreground="White" Padding="5,2" Margin="0,0,5,5"/>
-                    <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding InPointHNS, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="White" BorderThickness="0" Padding="5" Margin="0,0,0,5"/>
-                    
-                    <Button Grid.Row="1" Grid.Column="0" Content=" Set Out to Playhead " Click="OnSetOutPointClicked" Background="#333" Foreground="White" Padding="5,2"/>
-                    <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding OutPointHNS, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="White" BorderThickness="0" Padding="5"/>
+                    <Button Grid.Column="1" Click="OnStopClicked" Content="■ STOP" Background="#8B0000" Foreground="White" FontWeight="Bold" Height="45" Width="100" Margin="0,0,10,0"/>
+                    <Button Grid.Column="2" Click="OnPauseClicked" Content="⏸ PAUSE" Background="#333" Foreground="White" FontWeight="Bold" Height="45" Width="100" Margin="0,0,10,0"/>
+                    <Button Grid.Column="3" Click="OnPlayClicked" Content="▶ PLAY / FIRE NEXT" Background="#1E90FF" Foreground="White" FontWeight="Bold" Height="45" Width="180"/>
                 </Grid>
                 
-                <!-- Volume -->
-                <TextBlock Text="Volume (dB)" Foreground="#888" Margin="0,0,0,2"/>
-                <Slider Value="{Binding VolumeDb, UpdateSourceTrigger=PropertyChanged}" Minimum="-48" Maximum="12" TickFrequency="1" IsSnapToTickEnabled="True" Margin="0,0,0,10"/>
-                
-                <!-- Notes -->
-                <TextBlock Text="Notes" Foreground="#888" Margin="0,0,0,2"/>
-                <TextBox Text="{Binding Notes, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="White" BorderThickness="0" Padding="5" TextWrapping="Wrap" AcceptsReturn="True" Height="80"/>
-            </StackPanel>
-        </Border>
+                <TextBlock x:Name="StatusText" FontFamily="Consolas" Foreground="#888" HorizontalAlignment="Center" Margin="0,10,0,0"/>
+            </Grid>
+
+            <!-- RIGHT: Cue Inspector -->
+            <Border Grid.Column="2" Background="#1E1E1E" BorderBrush="#333" BorderThickness="1" Margin="10">
+                <StackPanel DataContext="{Binding SelectedItem, ElementName=PlaylistUI}" Margin="15">
+                    <TextBlock Text="CUE INSPECTOR" FontWeight="Bold" Foreground="#888" Margin="0,0,0,15" HorizontalAlignment="Center"/>
+                    
+                    <TextBlock Text="Cue ID" Foreground="#888" Margin="0,0,0,2"/>
+                    <TextBox Text="{Binding CueID, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="White" BorderThickness="0" Padding="5" Margin="0,0,0,10"/>
+                    
+                    <TextBlock Text="Title" Foreground="#888" Margin="0,0,0,2"/>
+                    <TextBox Text="{Binding Title, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="White" BorderThickness="0" Padding="5" Margin="0,0,0,10"/>
+                    
+                    <TextBlock Text="End Behavior" Foreground="#888" Margin="0,0,0,2"/>
+                    <ComboBox SelectedItem="{Binding EndBehavior, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="Black" Margin="0,0,0,10" x:Name="ComboEndBehavior"/>
+                    
+                    <TextBlock Text="Color Tag" Foreground="#888" Margin="0,0,0,2"/>
+                    <ComboBox SelectedItem="{Binding ColorTag, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="Black" Margin="0,0,0,10">
+                        <ComboBoxItem Content="#444444" />
+                        <ComboBoxItem Content="#FF0000" />
+                        <ComboBoxItem Content="#00FF00" />
+                        <ComboBoxItem Content="#0000FF" />
+                    </ComboBox>
+                    
+                    <TextBlock Text="Trim Points" Foreground="#888" Margin="0,0,0,2"/>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        
+                        <Button Grid.Row="0" Grid.Column="0" Content=" SET IN " Click="OnSetInPointClicked" Background="#333" Foreground="White" Padding="5,2" Margin="0,0,5,5"/>
+                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding InPointHNS, Converter={StaticResource TimecodeConverter}}" Background="#333" Foreground="White" Padding="5" Margin="0,0,0,5" VerticalAlignment="Center"/>
+                        
+                        <Button Grid.Row="1" Grid.Column="0" Content=" SET OUT " Click="OnSetOutPointClicked" Background="#333" Foreground="White" Padding="5,2"/>
+                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding OutPointHNS, Converter={StaticResource TimecodeConverter}}" Background="#333" Foreground="White" Padding="5" VerticalAlignment="Center"/>
+                    </Grid>
+                    
+                    <TextBlock Text="Volume (dB)" Foreground="#888" Margin="0,0,0,2"/>
+                    <Slider Value="{Binding VolumeDb, UpdateSourceTrigger=PropertyChanged}" Minimum="-60" Maximum="12" TickFrequency="1" IsSnapToTickEnabled="True" Margin="0,0,0,10" ValueChanged="OnVolumeSliderChanged"/>
+                    
+                    <TextBlock Text="Notes" Foreground="#888" Margin="0,0,0,2"/>
+                    <TextBox Text="{Binding Notes, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="White" BorderThickness="0" Padding="5" TextWrapping="Wrap" AcceptsReturn="True" Height="80"/>
+                </StackPanel>
+            </Border>
+        </Grid>
     </Grid>
 </Window>

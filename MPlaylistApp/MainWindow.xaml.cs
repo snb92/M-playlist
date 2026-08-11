@@ -16,6 +16,9 @@ namespace MPlaylistApp
         private ObservableCollection<MediaCue> _playlist = new ObservableCollection<MediaCue>();
         private VideoHwndHost? _videoSurface;
         private FileStateMonitor? _fileMonitor;
+        private MediaCue? _activePlayingCue;
+        private DateTime _lastTransitionTime = DateTime.MinValue;
+        private bool _isPaused = false;
 
         public MainWindow()
         {
@@ -57,14 +60,48 @@ namespace MPlaylistApp
                     _uiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
                     _uiTimer.Tick += (s, args) =>
                     {
-                        // Update the A/V Diagnostic Timecode
+                        // Acoustic Telemetry Probe
                         if (EngineInterop.mplaylist_get_diagnostics(out double audioTime, out double videoTime))
                         {
-                            TimecodeText.Text = $"A: {audioTime:F3}s | V: {videoTime:F3}s";
+                            EngineInterop.mplaylist_get_audio_telemetry(0, out int occupancy, out int capacity);
+                            double latencyMs = occupancy / 768.0; // 16 channels * 48000 Hz / 1000 = 768 floats per ms
+                            
+                            TimecodeText.Text = $"A: {audioTime:F3}s | V: {videoTime:F3}s | Latency: {latencyMs:F2}ms";
+                            Console.WriteLine($"AUDIO BUFFER - Capacity: {capacity} | Occupancy: {occupancy} | Latency: {latencyMs:F2} ms");
                             
                             if (!_isUserScrubbing)
                             {
                                 TimelineSlider.Value = videoTime * 10000000.0; 
+                            }
+                            
+                            // Step 2 & 3: Playhead Monitor Loop and EndBehavior Switch
+                            if (_activePlayingCue != null)
+                            {
+                                ulong currentPlayheadHNS = (ulong)(videoTime * 10000000.0);
+                                if (_activePlayingCue.OutPointHNS > 0 && currentPlayheadHNS >= _activePlayingCue.OutPointHNS)
+                                {
+                                    // Step 4: The Debounce Lock
+                                    if ((DateTime.Now - _lastTransitionTime).TotalMilliseconds > 300)
+                                    {
+                                        _lastTransitionTime = DateTime.Now;
+                                        
+                                        switch (_activePlayingCue.EndBehavior)
+                                        {
+                                            case EndBehavior.Stop:
+                                                EngineInterop.mplaylist_stop();
+                                                _activePlayingCue.IsActivePlaying = false;
+                                                _activePlayingCue = null;
+                                                break;
+                                            case EndBehavior.LoopForever:
+                                                EngineInterop.mplaylist_scrub_to((long)_activePlayingCue.InPointHNS);
+                                                break;
+                                            default:
+                                                // Default / Next Cue logic
+                                                OnPlayClicked(this, new RoutedEventArgs());
+                                                break;
+                                        }
+                                    }
+                                }
                             }
                         }
                     };
@@ -158,8 +195,16 @@ namespace MPlaylistApp
             }
         }
 
-        private void OnFireNextClicked(object sender, RoutedEventArgs e)
+        private void OnPlayClicked(object sender, RoutedEventArgs e)
         {
+            if (_isPaused && _activePlayingCue != null)
+            {
+                EngineInterop.mplaylist_resume();
+                _isPaused = false;
+                StatusText.Text = $"Resumed: {_activePlayingCue.Title}";
+                return;
+            }
+
             if (PlaylistUI.Items.Count > 0)
             {
                 int targetIndex = PlaylistUI.SelectedIndex;
@@ -171,8 +216,15 @@ namespace MPlaylistApp
                 long inHnsecs = (long)nextCue.InPointHNS;
                 long outHnsecs = (long)nextCue.OutPointHNS;
 
+                foreach (var c in _playlist)
+                {
+                    c.IsActivePlaying = false;
+                }
+                nextCue.IsActivePlaying = true;
+
                 // Fire the CURRENT target
                 EngineInterop.mplaylist_fire_cue((uint)targetIndex, transMs, inHnsecs, outHnsecs);
+                EngineInterop.mplaylist_set_volume_db((float)nextCue.VolumeDb);
                 
                 // POST-Advance the UI selection
                 if (_playlist.Count > 0)
@@ -180,7 +232,34 @@ namespace MPlaylistApp
                     PlaylistUI.SelectedIndex = (targetIndex + 1) % _playlist.Count;
                 }
                 StatusText.Text = $"Playing Cue #{targetIndex + 1}";
+                
+                // Assign active cue and set debounce
+                _activePlayingCue = nextCue;
+                _lastTransitionTime = DateTime.Now;
+                _isPaused = false;
             }
+        }
+
+        private void OnPauseClicked(object sender, RoutedEventArgs e)
+        {
+            if (_activePlayingCue != null && !_isPaused)
+            {
+                EngineInterop.mplaylist_pause();
+                _isPaused = true;
+                StatusText.Text = $"Paused: {_activePlayingCue.Title}";
+            }
+        }
+
+        private void OnStopClicked(object sender, RoutedEventArgs e)
+        {
+            EngineInterop.mplaylist_stop();
+            if (_activePlayingCue != null)
+            {
+                _activePlayingCue.IsActivePlaying = false;
+                _activePlayingCue = null;
+            }
+            _isPaused = false;
+            StatusText.Text = "Stopped";
         }
 
         protected override void OnClosed(EventArgs e)
@@ -220,12 +299,12 @@ namespace MPlaylistApp
 
         private void NdiBroadcastCheckBox_Checked(object sender, RoutedEventArgs e)
         {
-            EngineInterop.mplaylist_set_ndi_output(1);
+            EngineInterop.mplaylist_set_ndi_enabled(true);
         }
 
         private void NdiBroadcastCheckBox_Unchecked(object sender, RoutedEventArgs e)
         {
-            EngineInterop.mplaylist_set_ndi_output(0);
+            EngineInterop.mplaylist_set_ndi_enabled(false);
         }
 
         private void OnCornerSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -271,6 +350,14 @@ namespace MPlaylistApp
                 {
                     selectedCue.OutPointHNS = (ulong)(videoTime * 10000000.0);
                 }
+            }
+        }
+
+        private void OnVolumeSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (PlaylistUI.SelectedItem is MediaCue selectedCue && selectedCue == _activePlayingCue)
+            {
+                EngineInterop.mplaylist_set_volume_db((float)e.NewValue);
             }
         }
     }

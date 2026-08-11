@@ -50,3 +50,72 @@
 - **Hotfix (Feature D):** Resolved `E_ACCESSDENIED` crash caused by asynchronous OS file locks when an external program overwrites a media file. Implemented an asynchronous `IsFileLocked(FileShare.None)` polling gate in `CueModel.cs` to debounce the `FileSystemWatcher` event loop, guaranteeing that the C# Macro-State only commands the Rust backend to load a file after the external renderer has fully released it.
 - **Architectural Hotfix:** Fixed "Black Screen / Jerk" latency on Hard Cuts and Crossfades. Increased `AudioRingBuffer` size to 10 seconds to prevent real-time pre-roll throttling. Restructured `Playlist` with a `pending_fire` state that guarantees zero black frames by keeping the outgoing deck active on screen until the incoming deck's hardware decoder successfully pushes its first valid frame into VRAM.
 - Implemented Phase 4.6: The Stateful Cue Model & Inspector. Replaced the legacy `CueModel` with a pure serializable `MediaCue` data structure. Restructured `MainWindow.xaml` into a Master-Detail layout featuring a dedicated Cue Inspector panel bound directly to the selected `MediaCue`. Centralized all OS directory tracking into a single `FileStateMonitor` instance to prevent Win32 handle exhaustion on large show files.
+-   I m p l e m e n t e d   P h a s e   4 . 7 :   T h e   M a c r o - S t a t e   E x e c u t i o n   C o n d u c t o r .   A c t i v a t e d   t h e   i n e r t   E n d B e h a v i o r   s t a t e   m a c h i n e   i n   C #   b y   c o n v e r t i n g   t h e   W P F   D i s p a t c h e r T i m e r   t e l e m e t r y   l o o p   i n t o   a   c o n t i n u o u s   p l a y h e a d   m o n i t o r .   I m p l e m e n t e d   t h e r m o d y n a m i c   b o u n d a r y   i n t e r c e p t s   t o   a u t o m a t i c a l l y   f i r e   S t o p ,   L o o p F o r e v e r   ( S e e k ) ,   a n d   N e x t C u e   c o m m a n d s   i n t o   t h e   R u s t   e n g i n e   e x a c t l y   w h e n   t h e   a c t i v e   c u e   c r o s s e s   i t s   O u t P o i n t H N S .  
+ -   A d d e d   a   3 0 0 m s   t r a n s i t i o n   d e b o u n c e   l o c k   t o   t h e   C #   b o u n d a r y   i n t e r c e p t   t o   p r e v e n t   r a p i d   m u l t i - f i r i n g   w h i l e   w a i t i n g   f o r   t h e   h a r d w a r e   d e c o d e r   t o   r e s e t   i t s   p h y s i c a l   p l a y h e a d .   A d d e d   a n   e x p l i c i t   l o c k - f r e e   m p l a y l i s t _ s t o p ( )   F F I   c o m m a n d   t o   t h e   R u s t   b a c k e n d   t o   c o m p l e t e l y   d r o p   b o t h   d e c k s   a n d   i n s t a n t l y   f r e e   a l l   V R A M .  
+ -   I m p l e m e n t e d   P h a s e   4 . 8 :   G r i d   T e l e m e t r y   &   A u d i o   M a t h .   A d d e d   \ I s A c t i v e P l a y i n g \   b o u n d   s t a t e   t o   \ M e d i a C u e \   t r i g g e r i n g   a   r e a l - t i m e   \ D a t a T r i g g e r \   i n   W P F   t o   h i g h l i g h t   t h e   a c t i v e   p l a y i n g   r o w   w i t h   a   d i s t i n c t   b r o a d c a s t   c o l o r .   C o l o r T a g s   f r o m   t h e   c u e   m o d e l   a r e   n o w   v i s i b l y   r e n d e r e d   o n   t h e   g r i d   r o w s .  
+ -   B r i d g e d   t h e   C #   U I   \ V o l u m e D b \   s l i d e r   i n t o   t h e   R u s t   W A S A P I   e n g i n e   v i a   a   n e w   l o c k - f r e e   \ m p l a y l i s t _ s e t _ v o l u m e _ d b \   F F I   b o u n d a r y .   I m p l e m e n t e d   l o g a r i t h m i c   d e c i b e l - t o - l i n e a r   a m p l i t u d e   m a t h   i n   R u s t   ( \ 1 0 ^ d b / 2 0 \ ) ,   p u s h i n g   t h e   f l o a t   m u l t i p l i e r   t h r o u g h   t h e   \ A p p L o g i c \   M P S C   c h a n n e l   d i r e c t l y   t o   t h e   r e a l - t i m e   a u d i o   r e n d e r   t h r e a d   t o   s e c u r e l y   m i x   t h e   a u d i o   o u t p u t   w i t h o u t   c l i p p i n g   o r   l a t e n c y .  
+ 
+## [Phase 4.9] - 2026-08-11
+### Added
+- MasterClock is_paused atomic state to thermodynamically freeze the engine.
+- Acoustic Silence Override in WasapiEngine to prevent buffer-loop buzzing when paused.
+- TimecodeConverter.cs to map RAW HNS values to HH:MM:SS:FF standard formatting.
+- Discrete PLAY, PAUSE, and STOP transport controls in the WPF UI.
+- Hardware Configuration Expander in MainWindow.xaml to organize Output Corner Pinning and Audio configs.
+
+## [Phase 5.2] - 2026-08-11
+### Added
+- N-2 Delayed Staging Buffer in Dx11Compositor for asynchronous pixel readback.
+- Zero-stall extraction pipeline using ID3D11Texture2D Staging buffers and Map/Unmap commands.
+
+## [Phase 5.3] - 2026-08-11
+### Added
+- Dedicated NDI Worker Thread acting as a network shock absorber.
+- Lock-free memory extraction in DX11 loop with memcpy to Vec<u8>.
+- Drop-protocol via mpsc::sync_channel try_send, guaranteeing 0 wait on the render thread if the network stalls.
+- FFI boolean endpoint mplaylist_set_ndi_enabled linked to C# WPF checkbox.
+
+## [Phase 5.4] - 2026-08-11
+### Added
+- Multiplexed NDI Payload Enum separating Video and Audio transmission.
+- Acoustic Network Tap in WASAPI thread to intercept, de-interleave (Planar), and transmit audio data.
+- Zero-wait asynchronous try_send channel shared across DX11 and WASAPI hardware loops.
+
+## [Phase 6] - 2026-08-11
+### Added
+- VRAM Graveyard implementation via reverse std::sync::mpsc::sync_channel.
+- Zero-allocation memory intercept for both DX11 Video and WASAPI Audio threads.
+- Zero-Init CPU bypass using Vec::clear(), reserve(), and unsafe set_len() to maximize hardware memcpy speed.
+- Fully eradicated ~500 MB/s heap churn during live NDI transmission.
+
+## [Phase 6 Path D] - 2026-08-11
+### Added
+- Media Normalization via DSP Output Constraint Matrix.
+- Eliminated topological DSP conflicts by removing premature MF_SOURCE_READER_FIRST_AUDIO_STREAM initialization.
+- Defined exact thermodynamic memory footprint (MF_MT_AUDIO_BLOCK_ALIGNMENT, MF_MT_AUDIO_AVG_BYTES_PER_SECOND) to safely engage internal Media Foundation Audio Resampler MFTs for dynamic upmixing and 48kHz float resampling.
+
+## [Acoustic Thermodynamic Correction] - 2026-08-11
+### Fixed
+- Eradicated 10-second buffer bloat by constricting the AudioRingBuffer to a strict 200ms capacity (19200 floats).
+- Injected lock-free .flush() method into AudioRingBuffer to evaporate stale audio floats on transport commands.
+- Intercepted Scrub and Stop events in AppLogic to trigger the lock-free guillotine, enabling instantaneous acoustic jumps.
+
+## [Audio Routing Matrix] - 2026-08-11
+### Added
+- Implemented strict 16-Channel Master Bus topology to support multi-channel MXF broadcast ingest.
+- Embedded a lock-free 256-element Audio Routing Matrix inside the AudioRingBuffer.
+- Deployed a C-ABI hook \mplaylist_set_audio_route\ allowing the WPF UI to route audio dynamically with deterministic 0-allocation physics.
+
+## [16-Channel NDI Multiplexer] - 2026-08-11
+### Added
+- Implemented Zero-Allocation Planar Weaving to transmit all 16 channels of the Routing Matrix over NDI.
+- Pre-allocated planar vectors directly from the graveyard to eliminate heap overhead inside the WASAPI extraction callback.
+- NDI Audio payload is now structurally locked to a 16-channel layout.
+
+## [NDI Thermodynamic Correction] - 2026-08-11
+### Fixed
+- Re-aligned `NDIlib_send_create_t` FFI bindings to use `i32` for boolean flags to match NDI 6 C++ SDK 4-byte padding constraints, resolving silent uninitialized pointer rejections on sender boot.
+- Hardcoded `p_ndi_name` to static string memory to prevent lifetime drop zero-trust failures before background threads initialize.
+
+- **[2026-08-11]** Implemented Phase 6 Path B: Direct2D Typography & Immutable 1080p Swapchain. Locked engine output to 1920x1080 resolution and completely eradicated ResizeBuffers logic, preventing sub-SD compression blur on NDI streams.
+- **[2026-08-11]** Initialized Direct2D and DirectWrite Factories in graphics.rs to enable zero-copy hardware accelerated typography rasterization.

@@ -9,3 +9,4 @@ pub mod osc_server;
 pub mod app_logic;
 pub mod ndi_sys;
 pub mod ndi_transmitter;
+pub mod ndi_ffi;

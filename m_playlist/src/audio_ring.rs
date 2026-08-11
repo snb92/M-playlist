@@ -6,6 +6,7 @@ pub struct AudioRingBuffer {
     head: AtomicUsize,
     tail: AtomicUsize,
     capacity: usize,
+    pub routing_matrix: [AtomicU32; 256],
 }
 
 impl AudioRingBuffer {
@@ -15,17 +16,54 @@ impl AudioRingBuffer {
             buffer.push(AtomicU32::new(0)); // Pre-allocate on the heap
         }
         
+        let matrix = std::array::from_fn(|i| {
+            let in_ch = i / 16;
+            let out_bus = i % 16;
+            // Default Identity Diagonal: In 0 -> Out 0, In 1 -> Out 1
+            let default_gain = if in_ch == out_bus && in_ch < 2 { 1.0f32 } else { 0.0f32 };
+            AtomicU32::new(default_gain.to_bits())
+        });
+
         Self {
             buffer,
             head: AtomicUsize::new(0),
             tail: AtomicUsize::new(0),
             capacity,
+            routing_matrix: matrix,
+        }
+    }
+
+    pub fn set_route(&self, in_ch: usize, out_bus: usize, gain_db: f32) {
+        if in_ch < 16 && out_bus < 16 {
+            // Linear conversion: -100dB evaluates to absolute silence (0.0)
+            let gain_linear = if gain_db <= -100.0 { 0.0 } else { 10.0f32.powf(gain_db / 20.0) };
+            self.routing_matrix[in_ch * 16 + out_bus].store(gain_linear.to_bits(), std::sync::atomic::Ordering::Relaxed);
         }
     }
     /// Instantly flushes the buffer (Used during hot-swaps to prevent audio overlap)
     pub fn clear(&self) {
         let current_head = self.head.load(std::sync::atomic::Ordering::Acquire);
         self.tail.store(current_head, std::sync::atomic::Ordering::Release);
+    }
+
+    pub fn flush(&self) {
+        let current_write = self.head.load(std::sync::atomic::Ordering::Relaxed);
+        self.tail.store(current_write, std::sync::atomic::Ordering::Release);
+    }
+
+    pub fn get_occupancy(&self) -> usize {
+        let w = self.head.load(std::sync::atomic::Ordering::Relaxed);
+        let r = self.tail.load(std::sync::atomic::Ordering::Relaxed);
+        
+        if w >= r {
+            w - r
+        } else {
+            self.capacity - r + w
+        }
+    }
+
+    pub fn get_capacity(&self) -> usize {
+        self.capacity
     }
 
     pub fn push(&self, sample: f32) -> Result<(), &'static str> {

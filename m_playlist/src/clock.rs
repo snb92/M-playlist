@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub struct MasterClock {
     audio_frames_played: AtomicU64,
     sample_rate: u32,
+    pub is_paused: std::sync::atomic::AtomicBool,
 }
 
 impl MasterClock {
@@ -12,11 +13,14 @@ impl MasterClock {
         Self {
             audio_frames_played: AtomicU64::new(0),
             sample_rate,
+            is_paused: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
     pub fn add_frames(&self, frames: u64) {
-        self.audio_frames_played.fetch_add(frames, Ordering::Release);
+        if !self.is_paused.load(Ordering::Acquire) {
+            self.audio_frames_played.fetch_add(frames, Ordering::Release);
+        }
     }
 
     pub fn get_time_seconds(&self) -> f64 {

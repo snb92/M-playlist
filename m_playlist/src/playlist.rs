@@ -69,7 +69,7 @@ impl Playlist {
             
             if !self.is_deck_a_active {
                 println!("M-Playlist [LOGIC]: Preparing Deck A (Crossfade)...");
-                ring_a.clear();
+                ring_a.flush();
                 graphics.clear_deck(0);
                 self.deck_a = Some(MediaEngine::new(0).unwrap());
                 if let Some(deck_a) = self.deck_a.as_mut() {
@@ -78,7 +78,7 @@ impl Playlist {
                 }
             } else {
                 println!("M-Playlist [LOGIC]: Preparing Deck B (Crossfade)...");
-                ring_b.clear();
+                ring_b.flush();
                 graphics.clear_deck(1);
                 self.deck_b = Some(MediaEngine::new(1).unwrap());
                 if let Some(deck_b) = self.deck_b.as_mut() {
@@ -92,7 +92,7 @@ impl Playlist {
             
             if !self.is_deck_a_active {
                 println!("M-Playlist [LOGIC]: Preparing Deck A (Hard Cut)...");
-                ring_a.clear();
+                ring_a.flush();
                 graphics.clear_deck(0);
                 
                 self.deck_a = Some(MediaEngine::new(0).unwrap());
@@ -102,7 +102,7 @@ impl Playlist {
                 }
             } else {
                 println!("M-Playlist [LOGIC]: Preparing Deck B (Hard Cut)...");
-                ring_b.clear();
+                ring_b.flush();
                 graphics.clear_deck(1);
                 
                 self.deck_b = Some(MediaEngine::new(1).unwrap());
@@ -125,6 +125,14 @@ impl Playlist {
         if let Some(engine) = active_engine {
             engine.pending_scrub.store(target_hnsecs, std::sync::atomic::Ordering::SeqCst);
         }
+    }
+
+    pub fn stop(&mut self) {
+        self.deck_a = None;
+        self.deck_b = None;
+        self.is_transitioning = false;
+        self.pending_fire = false;
+        println!("M-Playlist [LOGIC]: Playlist Stopped. Decks released.");
     }
 
     pub fn tick(&mut self, clock: &MasterClock, blend_factor: &std::sync::atomic::AtomicU32, graphics: &Dx11Compositor, geometry: &[[f32; 4]; 4]) {

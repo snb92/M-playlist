@@ -25,6 +25,18 @@ namespace MPlaylistApp
         public static extern void mplaylist_shutdown();
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern bool mplaylist_stop();
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void mplaylist_set_volume_db(float db);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void mplaylist_pause();
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void mplaylist_resume();
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern bool mplaylist_set_window(IntPtr hwnd);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
@@ -105,8 +117,11 @@ namespace MPlaylistApp
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern bool mplaylist_get_diagnostics(out double audioTime, out double videoTime);
 
+        [DllImport("m_playlist.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern void mplaylist_set_ndi_enabled(bool enabled);
+
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        public static extern void mplaylist_set_ndi_output(byte enabled);
+        public static extern void mplaylist_get_audio_telemetry(int deck_id, out int out_occupancy, out int out_capacity);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void mplaylist_resize_swapchain(uint width, uint height);

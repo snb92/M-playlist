@@ -45,4 +45,4 @@
 
 ### Phase 4: Broadcast Capabilities
 - [x] Crossfades & Shaders (A/B Deck Compositor)
-- [ ] NDI Broadcast Output
+- [x] NDI Broadcast Output

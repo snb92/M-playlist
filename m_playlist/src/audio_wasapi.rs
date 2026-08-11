@@ -18,6 +18,9 @@ pub struct WasapiEngine {
     is_running: Arc<AtomicBool>,
     pub target_device_index: Arc<std::sync::atomic::AtomicU32>,
     pub pending_restart: Arc<AtomicBool>,
+    pub master_volume: Arc<std::sync::atomic::AtomicU32>,
+    pub ndi_tx: Arc<std::sync::Mutex<Option<std::sync::mpsc::SyncSender<crate::ndi_transmitter::NdiPayload>>>>,
+    pub audio_grave_rx: Arc<std::sync::Mutex<Option<std::sync::mpsc::Receiver<Vec<f32>>>>>,
     _thread: Option<thread::JoinHandle<()>>,
 }
 
@@ -40,6 +43,17 @@ impl WasapiEngine {
         
         let pending_restart = Arc::new(AtomicBool::new(false));
         let pending_restart_clone = pending_restart.clone();
+        
+        let master_volume = Arc::new(std::sync::atomic::AtomicU32::new(1.0_f32.to_bits()));
+        let master_volume_clone = master_volume.clone();
+        // We will pass an Arc to the thread so we can mutate it or we just clone the Arc of the whole engine?
+        // Wait, WasapiEngine::start returns an Arc<Self>. The thread closure is created before we return the Arc.
+        // Let's use a shared Arc<Mutex<Option<...>>> just for the thread.
+        let thread_ndi_tx = Arc::new(std::sync::Mutex::new(None::<std::sync::mpsc::SyncSender<crate::ndi_transmitter::NdiPayload>>));
+        let engine_ndi_tx = thread_ndi_tx.clone();
+        
+        let thread_audio_grave = Arc::new(std::sync::Mutex::new(None::<std::sync::mpsc::Receiver<Vec<f32>>>));
+        let engine_audio_grave = thread_audio_grave.clone();
 
         let handle = thread::spawn(move || {
             unsafe {
@@ -143,16 +157,64 @@ impl WasapiEngine {
                             (frames_available * num_channels as u32) as usize,
                         );
 
-                        for chunk in float_buffer.chunks_exact_mut(num_channels) {
-                            let blend = f32::from_bits(blend_factor.load(Ordering::Acquire));
-                            let left_a = ring_a.pop().unwrap_or(0.0);
-                            let left_b = ring_b.pop().unwrap_or(0.0);
-                            chunk[0] = (left_a * (1.0 - blend)) + (left_b * blend);
+                        let is_paused = clock.is_paused.load(Ordering::Acquire);
+                        let blend = f32::from_bits(blend_factor.load(Ordering::Acquire));
+                        let vol = f32::from_bits(master_volume_clone.load(Ordering::Acquire));
 
-                            if num_channels > 1 {
-                                let right_a = ring_a.pop().unwrap_or(0.0);
-                                let right_b = ring_b.pop().unwrap_or(0.0);
-                                chunk[1] = (right_a * (1.0 - blend)) + (right_b * blend);
+                        let mut planar_opt = if crate::ffi::NDI_ENABLED.load(Ordering::Relaxed) {
+                            let num_frames = frames_available as usize;
+                            let num_floats = num_frames * 16; // STRICT 16 CHANNELS
+
+                            let rx_lock = thread_audio_grave.lock().unwrap();
+                            let mut planar = if let Some(rx) = rx_lock.as_ref() {
+                                rx.try_recv().unwrap_or_else(|_| Vec::with_capacity(num_floats))
+                            } else {
+                                Vec::with_capacity(num_floats)
+                            };
+                            if planar.capacity() < num_floats { planar.reserve(num_floats - planar.capacity()); }
+                            unsafe { planar.set_len(num_floats); }
+                            Some(planar)
+                        } else {
+                            None
+                        };
+
+                        for (frame_idx, chunk) in float_buffer.chunks_exact_mut(num_channels).enumerate() {
+                            if is_paused {
+                                chunk[0] = 0.0;
+                                if num_channels > 1 {
+                                    chunk[1] = 0.0;
+                                }
+                            } else {
+                                let mut deck_a_frame = [0.0f32; 16];
+                                let mut deck_b_frame = [0.0f32; 16];
+
+                                for i in 0..16 { deck_a_frame[i] = ring_a.pop().unwrap_or(0.0); }
+                                for i in 0..16 { deck_b_frame[i] = ring_b.pop().unwrap_or(0.0); }
+
+                                let mixed_l = (deck_a_frame[0] * (1.0 - blend)) + (deck_b_frame[0] * blend);
+                                let mixed_r = (deck_a_frame[1] * (1.0 - blend)) + (deck_b_frame[1] * blend);
+
+                                if let Some(planar) = planar_opt.as_mut() {
+                                    let num_frames = frames_available as usize;
+                                    for ch in 0..16 {
+                                        // Planar Layout: Track 1 block, then Track 2 block, etc.
+                                        planar[(ch * num_frames) + frame_idx] = deck_a_frame[ch] + deck_b_frame[ch];
+                                    }
+                                }
+
+                                chunk[0] = mixed_l * vol;
+
+                                if num_channels > 1 {
+                                    chunk[1] = mixed_r * vol;
+                                }
+                            }
+                        }
+
+                        if let Some(planar) = planar_opt {
+                            if let Ok(tx_lock) = thread_ndi_tx.lock() {
+                                if let Some(tx) = tx_lock.as_ref() {
+                                    let _ = tx.try_send(crate::ndi_transmitter::NdiPayload::Audio(planar));
+                                }
                             }
                         }
 
@@ -184,6 +246,9 @@ impl WasapiEngine {
             is_running,
             target_device_index,
             pending_restart,
+            master_volume,
+            ndi_tx: engine_ndi_tx,
+            audio_grave_rx: engine_audio_grave,
             _thread: Some(handle),
         }))
     }

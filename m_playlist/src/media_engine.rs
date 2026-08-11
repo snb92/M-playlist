@@ -110,14 +110,7 @@ impl MediaEngine {
                     Err(e) => { eprintln!("FATAL: Failed to load file into MF: {:?}", e); return; }
                 };
 
-                // 6. Force Audio Output format to 32-bit Float PCM
-                let audio_type = MFCreateMediaType().unwrap();
-                audio_type.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio).unwrap();
-                audio_type.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_Float).unwrap();
-                if let Err(e) = source_reader.SetCurrentMediaType(MF_SOURCE_READER_FIRST_AUDIO_STREAM.0 as u32, None, &audio_type) {
-                    eprintln!("FATAL: Audio SetCurrentMediaType failed! {:?}", e);
-                    return;
-                }
+
 
                 // Native Output (Matches B8G8R8A8 Swapchain exactly, allows native 4K scaling)
                 let video_type = MFCreateMediaType().unwrap();
@@ -149,17 +142,44 @@ impl MediaEngine {
                     }
                 }
 
-                // 6b. Force Audio Output to 32-bit Float PCM, STEREO, 48kHz
-                let audio_type = MFCreateMediaType().unwrap();
-                audio_type.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio).unwrap();
-                audio_type.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_Float).unwrap();
-                
-                // CRITICAL FIX: Force OS to downmix 5.1 to Stereo and resample to our 48kHz Master Clock!
-                audio_type.SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, 2).unwrap();
-                audio_type.SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, 48000).unwrap();
-                
-                if let Err(e) = source_reader.SetCurrentMediaType(actual_audio_stream, None, &audio_type) {
-                    eprintln!("M-Playlist [WARNING]: Failed to set audio type: {:?}", e);
+                // INJECT: Native Topology Discovery
+                let mut native_channels = 2u32;
+                unsafe {
+                    if let Ok(native_type) = source_reader.GetNativeMediaType(actual_audio_stream, 0) {
+                        if let Ok(ch) = native_type.GetUINT32(&windows::Win32::Media::MediaFoundation::MF_MT_AUDIO_NUM_CHANNELS) {
+                            native_channels = ch.clamp(1, 16); // Strictly bound to 16-channel maximum
+                        }
+                    }
+                }
+
+                // 6. Enforce Engine Thermodynamic Standard: Force OS DSP to Normalize Audio
+                let audio_type = unsafe { windows::Win32::Media::MediaFoundation::MFCreateMediaType().unwrap() };
+
+                unsafe {
+                    audio_type.SetGUID(&windows::Win32::Media::MediaFoundation::MF_MT_MAJOR_TYPE, &windows::Win32::Media::MediaFoundation::MFMediaType_Audio).unwrap();
+                    audio_type.SetGUID(&windows::Win32::Media::MediaFoundation::MF_MT_SUBTYPE, &windows::Win32::Media::MediaFoundation::MFAudioFormat_Float).unwrap();
+
+                    // 6a. Define Absolute Baseline Parameters
+                    let channels = native_channels;
+                    let sample_rate = 48000u32;
+                    let bits_per_sample = 32u32; // MFAudioFormat_Float is strictly 32-bit
+
+                    // 6b. Calculate Mandatory Hardware Alignments (Required for DSP Resampler allocation)
+                    let block_alignment = (channels * bits_per_sample) / 8;
+                    let avg_bytes_per_sec = sample_rate * block_alignment;
+
+                    // 6c. Inject Constraints into the Media Type
+                    audio_type.SetUINT32(&windows::Win32::Media::MediaFoundation::MF_MT_AUDIO_NUM_CHANNELS, channels).unwrap();
+                    audio_type.SetUINT32(&windows::Win32::Media::MediaFoundation::MF_MT_AUDIO_SAMPLES_PER_SECOND, sample_rate).unwrap();
+                    audio_type.SetUINT32(&windows::Win32::Media::MediaFoundation::MF_MT_AUDIO_BITS_PER_SAMPLE, bits_per_sample).unwrap();
+                    audio_type.SetUINT32(&windows::Win32::Media::MediaFoundation::MF_MT_AUDIO_BLOCK_ALIGNMENT, block_alignment).unwrap();
+                    audio_type.SetUINT32(&windows::Win32::Media::MediaFoundation::MF_MT_AUDIO_AVG_BYTES_PER_SECOND, avg_bytes_per_sec).unwrap();
+                    audio_type.SetUINT32(&windows::Win32::Media::MediaFoundation::MF_MT_ALL_SAMPLES_INDEPENDENT, 1).unwrap();
+
+                    // 6d. Lock the Pipeline (Engages Upmixing/Resampling MFTs automatically)
+                    if let Err(e) = source_reader.SetCurrentMediaType(actual_audio_stream, None, &audio_type) {
+                        eprintln!("FATAL [Media Normalization]: Failed to lock MF Audio DSP pipeline: {:?}", e);
+                    }
                 }
 
                 // 6. In-Point Trim Physics
@@ -186,7 +206,8 @@ impl MediaEngine {
                     out_point,
                     is_looping,
                     hold_last_frame,
-                    deck_id
+                    deck_id,
+                    native_channels
                 );
 
                 CoUninitialize();
@@ -212,7 +233,8 @@ impl MediaEngine {
         out_point_hnsecs: i64,
         is_looping: bool,
         hold_last_frame: bool,
-        deck_id: u8
+        deck_id: u8,
+        channels: u32
     ) {
         let mut start_time_offset = 0.0;
         let mut is_currently_paused = false;
@@ -300,11 +322,34 @@ impl MediaEngine {
                         let num_floats = (current_len / 4) as usize; 
                         let float_slice = std::slice::from_raw_parts(raw_ptr as *const f32, num_floats);
                         
-                        // Ring buffer backpressure naturally syncs audio decoding speed
-                        for &f in float_slice {
-                            while audio_ring.push(f).is_err() {
-                                if !is_playing.load(std::sync::atomic::Ordering::Acquire) { break; }
-                                std::thread::sleep(std::time::Duration::from_millis(2));
+                        // 1. Snapshot the atomic matrix locally to bypass L1 cache thrashing during the hot-loop
+                        let mut local_matrix = [0.0f32; 256];
+                        for i in 0..256 {
+                            local_matrix[i] = f32::from_bits(audio_ring.routing_matrix[i].load(std::sync::atomic::Ordering::Relaxed));
+                        }
+
+                        let num_frames = num_floats / (channels as usize);
+
+                        for frame_idx in 0..num_frames {
+                            let mut master_bus = [0.0f32; 16]; // The 16-Channel Engine Stride
+                            
+                            // Matrix Multiply
+                            for in_ch in 0..(channels as usize) {
+                                let sample = float_slice[frame_idx * (channels as usize) + in_ch];
+                                for out_bus in 0..16 {
+                                    let gain = local_matrix[in_ch * 16 + out_bus];
+                                    if gain != 0.0 {
+                                        master_bus[out_bus] += sample * gain;
+                                    }
+                                }
+                            }
+                            
+                            // 2. Push the standardized 16-channel stride into the Ring Buffer
+                            for &f in &master_bus {
+                                while audio_ring.push(f).is_err() {
+                                    if !is_playing.load(std::sync::atomic::Ordering::Acquire) { break; }
+                                    std::thread::sleep(std::time::Duration::from_millis(2));
+                                }
                             }
                         }
                         buffer.Unlock().unwrap();

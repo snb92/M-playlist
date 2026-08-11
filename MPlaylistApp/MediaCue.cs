@@ -24,6 +24,7 @@ namespace MPlaylistApp
         private ulong _inPointHNS;
         private ulong _outPointHNS;
         private double _volumeDb = 0.0;
+        private bool _isActivePlaying = false;
         
         // FFI interop mapping (previously bound directly from UI in CueModel)
         private long _transitionDurationHnsecs;
@@ -40,6 +41,7 @@ namespace MPlaylistApp
         public ulong InPointHNS { get => _inPointHNS; set { _inPointHNS = value; OnPropertyChanged(); } }
         public ulong OutPointHNS { get => _outPointHNS; set { _outPointHNS = value; OnPropertyChanged(); } }
         public double VolumeDb { get => _volumeDb; set { _volumeDb = value; OnPropertyChanged(); } }
+        public bool IsActivePlaying { get => _isActivePlaying; set { _isActivePlaying = value; OnPropertyChanged(); } }
 
         // FFI mapping compatibility properties
         public long TransitionDurationHnsecs { get => _transitionDurationHnsecs; set { _transitionDurationHnsecs = value; OnPropertyChanged(); } }

@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, mpsc::SyncSender};
-use crate::ndi_transmitter::NdiFrame;
+use crate::ndi_transmitter::{NdiPayload, NdiVideoFrame};
 use windows::core::{ComInterface, Result};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Direct3D::{
@@ -165,9 +165,17 @@ pub struct Dx11Compositor {
     constant_buffer: ID3D11Buffer,
     pub staging_a: Mutex<Option<(ID3D11Texture2D, u32, SendableSample)>>,
     pub staging_b: Mutex<Option<(ID3D11Texture2D, u32, SendableSample)>>,
-    pub readback_textures: Mutex<[ID3D11Texture2D; 2]>,
-    pub frame_counter: AtomicU64,
-    pub ndi_tx: Mutex<Option<SyncSender<NdiFrame>>>,
+    pub ndi_staging_textures: Mutex<[Option<ID3D11Texture2D>; 3]>,
+    pub ndi_staging_index: Mutex<usize>,
+    pub frame_count: AtomicU64,
+    pub ndi_tx: Mutex<Option<SyncSender<NdiPayload>>>,
+    pub video_grave_rx: Mutex<Option<std::sync::mpsc::Receiver<Vec<u8>>>>,
+    pub master_rtv: windows::Win32::Graphics::Direct3D11::ID3D11RenderTargetView,
+    pub d2d_factory: windows::Win32::Graphics::Direct2D::ID2D1Factory,
+    pub d2d_render_target: windows::Win32::Graphics::Direct2D::ID2D1RenderTarget,
+    pub dwrite_factory: windows::Win32::Graphics::DirectWrite::IDWriteFactory,
+    pub text_format: windows::Win32::Graphics::DirectWrite::IDWriteTextFormat,
+    pub text_brush: windows::Win32::Graphics::Direct2D::ID2D1SolidColorBrush,
 }
 
 impl Dx11Compositor {
@@ -204,8 +212,8 @@ impl Dx11Compositor {
             let dxgi_factory: IDXGIFactory2 = dxgi_adapter.GetParent()?;
 
             let swapchain_desc = DXGI_SWAP_CHAIN_DESC1 {
-                Width: width, 
-                Height: height,
+                Width: 1920, 
+                Height: 1080,
                 Format: DXGI_FORMAT_B8G8R8A8_UNORM,
                 Stereo: false.into(),
                 SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
@@ -220,8 +228,8 @@ impl Dx11Compositor {
             let swapchain = dxgi_factory.CreateSwapChainForHwnd(&device, hwnd, &swapchain_desc, None, None)?;
 
             let staging_desc = D3D11_TEXTURE2D_DESC {
-                Width: width,
-                Height: height,
+                Width: 1920,
+                Height: 1080,
                 MipLevels: 1,
                 ArraySize: 1,
                 Format: DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -235,7 +243,9 @@ impl Dx11Compositor {
             device.CreateTexture2D(&staging_desc, None, Some(&mut tex1_opt))?;
             let mut tex2_opt: Option<ID3D11Texture2D> = None;
             device.CreateTexture2D(&staging_desc, None, Some(&mut tex2_opt))?;
-            let readback_textures = Mutex::new([tex1_opt.unwrap(), tex2_opt.unwrap()]);
+            let mut tex3_opt: Option<ID3D11Texture2D> = None;
+            device.CreateTexture2D(&staging_desc, None, Some(&mut tex3_opt))?;
+            let ndi_staging_textures = Mutex::new([tex1_opt, tex2_opt, tex3_opt]);
 
             // Shaders
             let mut vs_blob_opt: Option<ID3DBlob> = None;
@@ -312,6 +322,54 @@ impl Dx11Compositor {
             device.CreateBuffer(&cb_desc, None, Some(&mut constant_buffer_opt))?;
             let constant_buffer = constant_buffer_opt.unwrap();
 
+            // 2. Extract 1080p Backbuffer and Create RTV ONCE
+            let backbuffer: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D = swapchain.GetBuffer(0).unwrap();
+            let dest_res: windows::Win32::Graphics::Direct3D11::ID3D11Resource = backbuffer.cast().unwrap();
+            let mut rtv_opt = None;
+            device.CreateRenderTargetView(&dest_res, None, Some(&mut rtv_opt)).unwrap();
+            let master_rtv = rtv_opt.unwrap();
+
+            // 3. Initialize Direct2D & DirectWrite Factories
+            let d2d_factory: windows::Win32::Graphics::Direct2D::ID2D1Factory = windows::Win32::Graphics::Direct2D::D2D1CreateFactory(
+                windows::Win32::Graphics::Direct2D::D2D1_FACTORY_TYPE_MULTI_THREADED,
+                None,
+            ).unwrap();
+
+            let dwrite_factory: windows::Win32::Graphics::DirectWrite::IDWriteFactory = windows::Win32::Graphics::DirectWrite::DWriteCreateFactory(
+                windows::Win32::Graphics::DirectWrite::DWRITE_FACTORY_TYPE_SHARED,
+            ).unwrap();
+
+            // 4. Create Direct2D Render Target (Wrapped natively around DX11 Backbuffer)
+            let dxgi_surface: windows::Win32::Graphics::Dxgi::IDXGISurface = backbuffer.cast().unwrap();
+            let render_props = windows::Win32::Graphics::Direct2D::D2D1_RENDER_TARGET_PROPERTIES {
+                r#type: windows::Win32::Graphics::Direct2D::D2D1_RENDER_TARGET_TYPE_DEFAULT,
+                pixelFormat: windows::Win32::Graphics::Direct2D::Common::D2D1_PIXEL_FORMAT {
+                    format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM, // Matches BGRA_SUPPORT
+                    alphaMode: windows::Win32::Graphics::Direct2D::Common::D2D1_ALPHA_MODE_PREMULTIPLIED,
+                },
+                dpiX: 96.0,
+                dpiY: 96.0,
+                ..Default::default()
+            };
+
+            let d2d_render_target = d2d_factory.CreateDxgiSurfaceRenderTarget(&dxgi_surface, &render_props).unwrap();
+
+            // 5. Create Typography Resources
+            let text_brush = {
+                let color = windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F { r: 1.0, g: 1.0, b: 1.0, a: 1.0 };
+                d2d_render_target.CreateSolidColorBrush(&color as *const _, None).unwrap()
+            };
+
+            let text_format = dwrite_factory.CreateTextFormat(
+                windows::core::w!("Consolas"),
+                None,
+                windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_BOLD,
+                windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STYLE_NORMAL,
+                windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STRETCH_NORMAL,
+                64.0, // Broadcast-sized typography
+                windows::core::w!("en-US"),
+            ).unwrap();
+
             Ok(Self { 
                 device, 
                 context, 
@@ -324,9 +382,17 @@ impl Dx11Compositor {
                 constant_buffer,
                 staging_a: Mutex::new(None),
                 staging_b: Mutex::new(None),
-                readback_textures,
-                frame_counter: AtomicU64::new(0),
+                ndi_staging_textures,
+                ndi_staging_index: Mutex::new(0),
+                frame_count: AtomicU64::new(0),
                 ndi_tx: Mutex::new(None),
+                video_grave_rx: Mutex::new(None),
+                master_rtv,
+                d2d_factory,
+                d2d_render_target,
+                dwrite_factory,
+                text_format,
+                text_brush,
             })
         }
     }
@@ -351,28 +417,19 @@ impl Dx11Compositor {
     pub fn render_composited(&self, blend_factor: f32, geometry: &[[f32; 4]; 4]) -> Result<()> {
         unsafe {
             let backbuffer: ID3D11Texture2D = self.swapchain.GetBuffer(0)?;
-            let mut rtv_opt: Option<windows::Win32::Graphics::Direct3D11::ID3D11RenderTargetView> = None;
-            let dest_res: ID3D11Resource = backbuffer.cast()?;
-            self.device.CreateRenderTargetView(&dest_res, None, Some(&mut rtv_opt))?;
-            let rtv = rtv_opt.unwrap();
-            
-            let clear_color: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
-            self.context.ClearRenderTargetView(&rtv, &clear_color);
-            
-            let current_w = self.width.load(Ordering::Acquire);
-            let current_h = self.height.load(Ordering::Acquire);
+            let current_w = 1920;
+            let current_h = 1080;
 
-            let viewport = windows::Win32::Graphics::Direct3D11::D3D11_VIEWPORT {
-                TopLeftX: 0.0,
-                TopLeftY: 0.0,
-                Width: current_w as f32,
-                Height: current_h as f32,
-                MinDepth: 0.0,
-                MaxDepth: 1.0,
+            // 1. Static 1080p Viewport & RTV Binding
+            let viewport = windows::Win32::Graphics::Direct3D11::D3D11_VIEWPORT { 
+                TopLeftX: 0.0, TopLeftY: 0.0, Width: 1920.0, Height: 1080.0, MinDepth: 0.0, MaxDepth: 1.0 
             };
             self.context.RSSetViewports(Some(&[viewport]));
-            
-            self.context.OMSetRenderTargets(Some(&[Some(rtv)]), None);
+
+            let clear_color: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+            self.context.ClearRenderTargetView(&self.master_rtv, &clear_color);
+            self.context.OMSetRenderTargets(Some(&[Some(self.master_rtv.clone())]), None);
+
 
             self.context.IASetPrimitiveTopology(windows::Win32::Graphics::Direct3D::D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             self.context.VSSetShader(&self.vertex_shader, None);
@@ -453,46 +510,97 @@ impl Dx11Compositor {
 
             self.context.Draw(3, 0);
 
-            // Phase 5A: Pipelined Readback - GATED by NDI!
+            // 3. DIRECT2D TYPOGRAPHY PASS (Hardware Accelerated over VRAM)
+            self.d2d_render_target.BeginDraw();
+            
+            let text: Vec<u16> = "M-PLAYLIST BROADCAST CORE: 1080p/60 DIRECT2D ACTIVE".encode_utf16().collect();
+            let text_rect = windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F { 
+                left: 50.0, top: 50.0, right: 1870.0, bottom: 200.0 
+            };
+            
+            self.d2d_render_target.DrawText(
+                &text,
+                &self.text_format,
+                &text_rect,
+                &self.text_brush,
+                windows::Win32::Graphics::Direct2D::D2D1_DRAW_TEXT_OPTIONS_NONE,
+                windows::Win32::Graphics::DirectWrite::DWRITE_MEASURING_MODE_NATURAL,
+            );
+            
+            self.d2d_render_target.EndDraw(None, None).unwrap();
+
+            // STRIKE 2: The CopyResource & Delayed Map Pipeline
+            let frame = self.frame_count.load(Ordering::Relaxed);
+            let mut ndi_staging_lock = self.ndi_staging_textures.lock().unwrap();
+            let mut index_lock = self.ndi_staging_index.lock().unwrap();
+            let current_index = *index_lock;
             let tx_opt = self.ndi_tx.lock().unwrap();
-            if tx_opt.is_some() {
-                let frame = self.frame_counter.load(Ordering::Relaxed);
-                
-                let readback_lock = self.readback_textures.lock().unwrap();
-                let target_readback = &readback_lock[(frame % 2) as usize];
-                let dest_readback_res: ID3D11Resource = target_readback.cast()?;
+
+            // Hardware Copy
+            let target_staging_opt = &ndi_staging_lock[current_index];
+            if let Some(target_staging) = target_staging_opt {
+                let dest_staging_res: ID3D11Resource = target_staging.cast()?;
                 let src_backbuffer_res: ID3D11Resource = backbuffer.cast()?;
-                self.context.CopyResource(&dest_readback_res, &src_backbuffer_res);
-                
-                if frame > 0 {
-                    let mapped_tex = &readback_lock[((frame - 1) % 2) as usize];
+                self.context.CopyResource(&dest_staging_res, &src_backbuffer_res);
+            }
+
+            // Map Oldest
+            let read_index = (current_index + 1) % 3;
+            if frame >= 2 {
+                let mapped_tex_opt = &ndi_staging_lock[read_index];
+                if let Some(mapped_tex) = mapped_tex_opt {
                     let mapped_res: ID3D11Resource = mapped_tex.cast()?;
                     let mut mapped_subresource = D3D11_MAPPED_SUBRESOURCE::default();
-                    self.context.Map(
+                    
+                    let map_result = self.context.Map(
                         &mapped_res, 
                         0, 
                         windows::Win32::Graphics::Direct3D11::D3D11_MAP_READ, 
                         0, 
                         Some(&mut mapped_subresource)
-                    )?;
-                    
-                    if let Some(tx) = tx_opt.as_ref() {
+                    );
+
+                    if map_result.is_ok() {
                         let total_bytes = (mapped_subresource.RowPitch * current_h) as usize;
-                        let slice = std::slice::from_raw_parts(mapped_subresource.pData as *const u8, total_bytes);
-                        let ndi_frame = NdiFrame { 
-                            data: slice.to_vec(), 
-                            width: current_w as i32, 
-                            height: current_h as i32, 
-                            stride: mapped_subresource.RowPitch as i32 
+                        
+                        let mut buffer = {
+                            let mut rx_lock = self.video_grave_rx.lock().unwrap();
+                            if let Some(rx) = rx_lock.as_ref() {
+                                rx.try_recv().unwrap_or_else(|_| Vec::with_capacity(total_bytes))
+                            } else {
+                                Vec::with_capacity(total_bytes)
+                            }
                         };
-                        let _ = tx.try_send(ndi_frame);
+                        
+                        if buffer.capacity() < total_bytes {
+                            buffer.reserve(total_bytes - buffer.capacity());
+                        }
+
+                        unsafe {
+                            buffer.set_len(total_bytes);
+                            std::ptr::copy_nonoverlapping(mapped_subresource.pData as *const u8, buffer.as_mut_ptr(), total_bytes);
+                        }
+                        
+                        self.context.Unmap(&mapped_res, 0);
+                        
+                        if crate::ffi::NDI_ENABLED.load(Ordering::Relaxed) {
+                            if let Some(tx) = tx_opt.as_ref() {
+                                let ndi_frame = NdiVideoFrame { 
+                                    data: buffer, 
+                                    width: current_w as i32, 
+                                    height: current_h as i32, 
+                                    stride: mapped_subresource.RowPitch as i32 
+                                };
+                                let _ = tx.try_send(NdiPayload::Video(ndi_frame));
+                            }
+                        }
                     }
-                    
-                    self.context.Unmap(&mapped_res, 0);
                 }
-                
-                self.frame_counter.fetch_add(1, Ordering::Relaxed);
             }
+
+            // Advance
+            *index_lock = (current_index + 1) % 3;
+            self.frame_count.fetch_add(1, Ordering::Relaxed);
 
             // Unbind to release references safely
             self.context.PSSetShaderResources(0, Some(&[None, None]));
@@ -503,42 +611,8 @@ impl Dx11Compositor {
         Ok(())
     }
 
-    pub fn resize(&self, new_width: u32, new_height: u32) -> Result<()> {
-        if new_width == 0 || new_height == 0 { return Ok(()); }
-        unsafe {
-            let current_w = self.width.load(Ordering::Acquire);
-            let current_h = self.height.load(Ordering::Acquire);
-            if current_w == new_width && current_h == new_height { return Ok(()); }
-
-            // 1. Release readback textures to free references to DXGI
-            let mut readback_lock = self.readback_textures.lock().unwrap();
-            
-            // 2. Resize swapchain buffers
-            self.swapchain.ResizeBuffers(2, new_width, new_height, DXGI_FORMAT_B8G8R8A8_UNORM, 0)?;
-
-            // 3. Update atomics
-            self.width.store(new_width, Ordering::Release);
-            self.height.store(new_height, Ordering::Release);
-
-            // 4. Recreate readback textures
-            let staging_desc = D3D11_TEXTURE2D_DESC {
-                Width: new_width,
-                Height: new_height,
-                MipLevels: 1,
-                ArraySize: 1,
-                Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: windows::Win32::Graphics::Direct3D11::D3D11_USAGE_STAGING,
-                BindFlags: 0,
-                CPUAccessFlags: windows::Win32::Graphics::Direct3D11::D3D11_CPU_ACCESS_READ.0 as u32,
-                MiscFlags: 0,
-            };
-            let mut tex1_opt: Option<ID3D11Texture2D> = None;
-            self.device.CreateTexture2D(&staging_desc, None, Some(&mut tex1_opt))?;
-            let mut tex2_opt: Option<ID3D11Texture2D> = None;
-            self.device.CreateTexture2D(&staging_desc, None, Some(&mut tex2_opt))?;
-            *readback_lock = [tex1_opt.unwrap(), tex2_opt.unwrap()];
-        }
+    pub fn resize(&self, _new_width: u32, _new_height: u32) -> Result<()> {
+        // No-op: Lock the swapchain to 1080p
         Ok(())
     }
 }
