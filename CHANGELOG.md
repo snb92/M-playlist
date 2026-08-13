@@ -175,3 +175,12 @@
 - Decoupled EngineConductor pre-loading by constructing the LoadPolymorphicCue pipeline to conditionally route cues to Rust via mplaylist_load_image vs mplaylist_load_cue.
 - Integrated IsStaticImage primitive byte into the shared FfiCue struct to enforce the "Blind Muscle" architecture, preventing string-parsing in Rust.
 - Bypassed WMF decoder instantiation in Rust Playlist::fire_cue for static images, loading them instantaneously via WIC and blasting them to the DX11 standby texture buffer to maintain zero-black-frame crossfade physics.
+
+## [Phase 12: Topological Output Physical Deployment] - 2026-08-13
+### Added
+- Implemented Multi-Swapchain Hardware Matrix to provide a Clean Feed output strictly bound to \DXGI_SCALING_STRETCH\.
+- Connected \mplaylist_bind_output_matrix\ FFI for the pure 1080p hardware-accelerated "Clean Feed" on the secondary monitor, bypassing the WPF render thread loop.
+### Fixed
+- Lobotomized \mplaylist_resize_swapchain\ to permanently decouple the master render resolution from the C# UI window dimension, curing the \DXGI_ERROR_INVALID_CALL\ collision upon \CopyResource\.
+- Hard-restored \fi.rs\ to pristine architectural state, surgically injecting missing boundaries without breaking the underlying string-to-brush logic.
+
