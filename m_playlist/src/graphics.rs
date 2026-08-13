@@ -209,6 +209,14 @@ pub struct SendableSample(pub windows::Win32::Media::MediaFoundation::IMFSample)
 unsafe impl Send for SendableSample {}
 unsafe impl Sync for SendableSample {}
 
+pub struct NdiPingPong {
+    pub width: u32,
+    pub height: u32,
+    pub stride: u32,
+    pub pixels: Vec<u8>,
+    pub is_dirty: bool,
+}
+
 pub struct Dx11Compositor {
     pub device: ID3D11Device,
     context: ID3D11DeviceContext,
@@ -221,6 +229,8 @@ pub struct Dx11Compositor {
     constant_buffer: ID3D11Buffer,
     pub staging_a: Mutex<Option<(ID3D11Texture2D, u32, Option<SendableSample>)>>,
     pub staging_b: Mutex<Option<(ID3D11Texture2D, u32, Option<SendableSample>)>>,
+    pub ndi_rx_a: std::sync::Arc<std::sync::Mutex<NdiPingPong>>,
+    pub ndi_rx_b: std::sync::Arc<std::sync::Mutex<NdiPingPong>>,
     pub ndi_staging_textures: Mutex<[Option<ID3D11Texture2D>; 3]>,
     pub ndi_staging_index: Mutex<usize>,
     pub frame_count: AtomicU64,
@@ -439,6 +449,8 @@ impl Dx11Compositor {
                 constant_buffer,
                 staging_a: Mutex::new(None),
                 staging_b: Mutex::new(None),
+                ndi_rx_a: std::sync::Arc::new(std::sync::Mutex::new(NdiPingPong { width: 0, height: 0, stride: 0, pixels: Vec::new(), is_dirty: false })),
+                ndi_rx_b: std::sync::Arc::new(std::sync::Mutex::new(NdiPingPong { width: 0, height: 0, stride: 0, pixels: Vec::new(), is_dirty: false })),
                 ndi_staging_textures,
                 ndi_staging_index: Mutex::new(0),
                 frame_count: AtomicU64::new(0),
@@ -501,6 +513,63 @@ impl Dx11Compositor {
             self.context.VSSetShader(&self.vertex_shader, None);
             self.context.PSSetShader(&self.pixel_shader, None);
             self.context.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
+
+            let mut process_ndi_rx = |rx_mutex: &std::sync::Mutex<NdiPingPong>, staging_mutex: &std::sync::Mutex<Option<(windows::Win32::Graphics::Direct3D11::ID3D11Texture2D, u32, Option<crate::graphics::SendableSample>)>>| {
+                if let Ok(mut rx) = rx_mutex.lock() {
+                    if rx.is_dirty && rx.width > 0 && rx.height > 0 {
+                        let mut lock = staging_mutex.lock().unwrap();
+                        let mut recreate = true;
+                        
+                        // 1. Attempt zero-copy Map/Unmap if DYNAMIC texture already matches dimensions
+                        if let Some((tex, _, _)) = lock.as_ref() {
+                            let mut desc = windows::Win32::Graphics::Direct3D11::D3D11_TEXTURE2D_DESC::default();
+                            unsafe { tex.GetDesc(&mut desc) };
+                            if desc.Width == rx.width && desc.Height == rx.height && desc.Usage == windows::Win32::Graphics::Direct3D11::D3D11_USAGE_DYNAMIC {
+                                recreate = false;
+                                let mut mapped = windows::Win32::Graphics::Direct3D11::D3D11_MAPPED_SUBRESOURCE::default();
+                                if unsafe { self.context.Map(tex, 0, windows::Win32::Graphics::Direct3D11::D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped)) }.is_ok() {
+                                    unsafe {
+                                        let src_ptr = rx.pixels.as_ptr();
+                                        let dst_ptr = mapped.pData as *mut u8;
+                                        for y in 0..rx.height {
+                                            std::ptr::copy_nonoverlapping(
+                                                src_ptr.offset((y * rx.stride) as isize),
+                                                dst_ptr.offset((y * mapped.RowPitch) as isize),
+                                                (rx.width * 4) as usize,
+                                            );
+                                        }
+                                        self.context.Unmap(tex, 0);
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // 2. Allocate the Dynamic Texture once if missing
+                        if recreate {
+                            let desc = windows::Win32::Graphics::Direct3D11::D3D11_TEXTURE2D_DESC {
+                                Width: rx.width, Height: rx.height, MipLevels: 1, ArraySize: 1,
+                                Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM, // NDI BGRA
+                                SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                                Usage: windows::Win32::Graphics::Direct3D11::D3D11_USAGE_DYNAMIC,
+                                BindFlags: windows::Win32::Graphics::Direct3D11::D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                                CPUAccessFlags: windows::Win32::Graphics::Direct3D11::D3D11_CPU_ACCESS_WRITE.0 as u32,
+                                ..Default::default()
+                            };
+                            let init_data = windows::Win32::Graphics::Direct3D11::D3D11_SUBRESOURCE_DATA {
+                                pSysMem: rx.pixels.as_ptr() as *const _, SysMemPitch: rx.stride, SysMemSlicePitch: rx.stride * rx.height,
+                            };
+                            let mut texture = None;
+                            if unsafe { self.device.CreateTexture2D(&desc, Some(&init_data), Some(&mut texture)) }.is_ok() {
+                                *lock = Some((texture.unwrap(), 0, None));
+                            }
+                        }
+                        rx.is_dirty = false;
+                    }
+                }
+            };
+
+            process_ndi_rx(&self.ndi_rx_a, &self.staging_a);
+            process_ndi_rx(&self.ndi_rx_b, &self.staging_b);
 
             let lock_a = self.staging_a.lock().unwrap();
             let lock_b = self.staging_b.lock().unwrap();

@@ -65,5 +65,8 @@
   - [x] Phase 11c: The Pure State Realignment (C-ABI Modality Enforcement)
 
   - [x] Phase 12: Topological Output & Clean Feed
-  - [ ] Phase 13a: OSC State Injection (Move Listener to C# Brain, Expose Public Transport API on EngineConductor)
-
+  - [x] Phase 13a: OSC State Injection (Move Listener to C# Brain, Expose Public Transport API on EngineConductor)
+  - [x] Phase 14a: NDI Ingestion (Structural Primitive & Receiver FFI)
+  - [x] Phase 14a.2: The Muscle Lobotomy (Eradicate static cues array, pass FfiCue dynamic payload)
+  - [x] Phase 14b: NDI Ingestion (Lock-Free Receiver Thread & VRAM Blasting)
+  - [x] Phase 14b.2: The Transition Lock (Insulate Rust engine from C# lookahead during crossfades)

@@ -15,12 +15,22 @@ pub struct EngineCue {
     pub is_looping: bool,
     pub hold_last_frame: bool,
     pub transition_duration_hnsecs: i64,
-    pub is_static_image: bool,
+    pub modality: u8,
+}
+#[derive(Clone, Debug)]
+pub struct OwnedCue {
+    pub filepath: String,
+    pub in_point_hnsecs: i64,
+    pub out_point_hnsecs: i64,
+    pub is_looping: u8,
+    pub hold_last_frame: u8,
+    pub transition_duration_hnsecs: i64,
+    pub modality: u8,
 }
 
 pub enum EngineCommand {
     LoadCue(EngineCue),
-    FireCue(u32, u32, i64, i64),
+    FireCue(OwnedCue),
     SetAudioDevice(u32),
     Scrub(i64),
     SetGeometry([f32; 8]),
@@ -48,6 +58,7 @@ impl AppLogic {
         audio_engine: Arc<crate::audio_wasapi::WasapiEngine>,
     ) -> Self {
         let (tx, rx): (Sender<EngineCommand>, Receiver<EngineCommand>) = channel();
+        let tx_clone = tx.clone();
         
         let thread = thread::spawn(move || {
             unsafe {
@@ -172,8 +183,8 @@ impl AppLogic {
                         EngineCommand::LoadCue(cue) => {
                             playlist.load_cue(cue);
                         }
-                        EngineCommand::FireCue(cue_index, transition_ms, in_point, out_point) => {
-                            playlist.fire_cue(cue_index, transition_ms, in_point, out_point, ring_a.clone(), ring_b.clone(), blend_factor.clone(), clock.clone(), graphics.clone());
+                        EngineCommand::FireCue(owned_cue) => {
+                            playlist.fire_cue(&owned_cue, &tx_clone, ring_a.clone(), ring_b.clone(), blend_factor.clone(), clock.clone(), graphics.clone());
                         }
                         EngineCommand::SetAudioDevice(index) => {
                             println!("M-Playlist [LOGIC]: Changing Audio Device to index {}", index);

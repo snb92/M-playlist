@@ -12,7 +12,6 @@ use crate::audio_ring::AudioRingBuffer;
 use crate::audio_wasapi::WasapiEngine;
 use crate::clock::MasterClock;
 use crate::graphics::Dx11Compositor;
-use crate::osc_server::OscServer;
 use crate::app_logic::{AppLogic, EngineCommand, EngineCue};
 
 #[repr(C)]
@@ -23,7 +22,7 @@ pub struct FfiCue {
     pub is_looping: u8,            // u8 used to prevent C# bool ABI alignment issues
     pub hold_last_frame: u8,
     pub transition_duration_hnsecs: i64,
-    pub is_static_image: u8,
+    pub modality: u8,
 }
 
 struct EngineState {
@@ -34,7 +33,6 @@ struct EngineState {
     wasapi: Option<Arc<WasapiEngine>>,
     graphics: Option<Arc<Dx11Compositor>>,
     app_logic: Option<AppLogic>, // <-- Replaces Playlist
-    osc: Option<OscServer>,
 }
 
 static ENGINE_STATE: OnceLock<Mutex<EngineState>> = OnceLock::new();
@@ -49,7 +47,6 @@ fn get_state() -> &'static Mutex<EngineState> {
             wasapi: None,
             graphics: None,
             app_logic: None,
-            osc: None,
         })
     })
 }
@@ -66,21 +63,6 @@ pub extern "C" fn mplaylist_init() -> bool {
     if state.wasapi.is_some() { return true; }
     
     // Note: We no longer initialize the Playlist here, as it waits for the Graphics Window.
-    
-    if state.osc.is_none() {
-        match OscServer::start(51001, || {
-            let internal_state = get_state().lock().unwrap();
-            // Grabbing the Mutex here is instantaneous because we only drop an enum into a queue!
-            if let Some(logic) = internal_state.app_logic.as_ref() {
-                // Warning: OSC FireNext needs an index if it's acting as "FireCue". 
-                // Using 0 for now as an emergency fallback, but it breaks deterministic indexing!
-                let _ = logic.tx.send(EngineCommand::FireCue(0, 0, 0, 0)); 
-            }
-        }) {
-            Ok(server) => state.osc = Some(server),
-            Err(e) => eprintln!("Failed to start OSC Server: {}", e),
-        }
-    }
     
     match crate::audio_wasapi::WasapiEngine::start(
         state.ring_a.clone(), 
@@ -99,7 +81,6 @@ pub extern "C" fn mplaylist_init() -> bool {
 #[no_mangle]
 pub extern "C" fn mplaylist_shutdown() {
     let mut state = get_state().lock().unwrap();
-    state.osc = None; 
     state.app_logic = None; 
     state.wasapi = None; 
     unsafe { windows::Win32::Media::MediaFoundation::MFShutdown().ok(); }
@@ -159,7 +140,7 @@ pub extern "C" fn mplaylist_load_cue(cue: FfiCue) -> bool {
         is_looping: cue.is_looping != 0,
         hold_last_frame: cue.hold_last_frame != 0,
         transition_duration_hnsecs: cue.transition_duration_hnsecs,
-        is_static_image: cue.is_static_image != 0,
+        modality: cue.modality,
     };
 
     let state = get_state().lock().unwrap();
@@ -171,10 +152,22 @@ pub extern "C" fn mplaylist_load_cue(cue: FfiCue) -> bool {
 }
 
 #[no_mangle]
-pub extern "C" fn mplaylist_fire_cue(cue_index: u32, transition_ms: u32, in_point_hnsecs: i64, out_point_hnsecs: i64) -> bool {
+pub extern "C" fn mplaylist_fire_cue(cue: FfiCue) -> bool {
+    let filepath = if cue.filepath.is_null() { String::new() } else { unsafe { std::ffi::CStr::from_ptr(cue.filepath).to_string_lossy().into_owned() } };
+    
+    let owned_cue = crate::app_logic::OwnedCue {
+        filepath,
+        in_point_hnsecs: cue.in_point_hnsecs,
+        out_point_hnsecs: cue.out_point_hnsecs,
+        is_looping: cue.is_looping,
+        hold_last_frame: cue.hold_last_frame,
+        transition_duration_hnsecs: cue.transition_duration_hnsecs,
+        modality: cue.modality,
+    };
+
     let state = get_state().lock().unwrap();
     if let Some(logic) = state.app_logic.as_ref() {
-        let _ = logic.tx.send(EngineCommand::FireCue(cue_index, transition_ms, in_point_hnsecs, out_point_hnsecs));
+        let _ = logic.tx.send(crate::app_logic::EngineCommand::FireCue(owned_cue));
         return true;
     }
     false

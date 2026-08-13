@@ -46,19 +46,21 @@ namespace MPlaylistApp
         public string Notes { get => _notes; set { _notes = value; OnPropertyChanged(); } }
         public EndBehavior EndBehavior { get => _endBehavior; set { _endBehavior = value; OnPropertyChanged(); } }
         public ulong InPointHNS { get => _inPointHNS; set { _inPointHNS = value; OnPropertyChanged(); } }
-        public ulong OutPointHNS { get => IsStaticImage ? 0 : _outPointHNS; set { _outPointHNS = value; OnPropertyChanged(); } }
-        public ulong DurationHNS { get => IsStaticImage ? 0 : _durationHNS; set { _durationHNS = value; OnPropertyChanged(); } }
+        public ulong OutPointHNS { get => Modality == CueModality.WICStatic ? 0 : _outPointHNS; set { _outPointHNS = value; OnPropertyChanged(); } }
+        public ulong DurationHNS { get => Modality == CueModality.WICStatic ? 0 : _durationHNS; set { _durationHNS = value; OnPropertyChanged(); } }
         public uint TransitionMs { get => _transitionMs; set { _transitionMs = value; OnPropertyChanged(); } }
         public double VolumeDb { get => _volumeDb; set { _volumeDb = value; OnPropertyChanged(); } }
         public bool IsActivePlaying { get => _isActivePlaying; set { _isActivePlaying = value; OnPropertyChanged(); } }
 
-        public bool IsStaticImage 
+        public CueModality Modality 
         {
             get 
             {
-                if (string.IsNullOrEmpty(_filePath)) return false;
+                if (string.IsNullOrEmpty(_filePath)) return CueModality.WMFTemporal;
+                if (_filePath.StartsWith("ndi://", StringComparison.OrdinalIgnoreCase)) return CueModality.NDILive;
                 string ext = System.IO.Path.GetExtension(_filePath).ToLowerInvariant();
-                return ext == ".png" || ext == ".jpg" || ext == ".jpeg";
+                if (ext == ".png" || ext == ".jpg" || ext == ".jpeg") return CueModality.WICStatic;
+                return CueModality.WMFTemporal;
             }
         }
 

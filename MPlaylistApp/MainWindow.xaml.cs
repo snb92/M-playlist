@@ -19,6 +19,7 @@ namespace MPlaylistApp
         private FileStateMonitor? _fileMonitor;
         private MediaCue? _activePlayingCue;
         private bool _isPaused = false;
+        private OscServer? _oscServer;
 
         private float _smoothedVuL = 0;
         private float _smoothedVuR = 0;
@@ -81,6 +82,9 @@ namespace MPlaylistApp
                     
                     _conductor.UpdatePlaylistTopology(_playlist);
                     _conductor.Start();
+                    
+                    _oscServer = new OscServer(_conductor);
+                    _oscServer.Start(51001);
                     
                     // Start UI polling for timecode (loose 33ms interval purely for UI updates)
                     _uiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
@@ -153,10 +157,11 @@ namespace MPlaylistApp
                         }
                     };
                     _uiTimer.Start();
+
                 }
                 else
                 {
-                    StatusText.Text = "FATAL: DXGI Compositor Failed.";
+                    StatusText.Text = "System Offline. Core Error.";
                 }
                 
                 // FORCE an initial resize now that DXGI is bound!
@@ -252,6 +257,10 @@ namespace MPlaylistApp
 
         private void OnTestCleanFeedClicked(object sender, RoutedEventArgs e)
         {
+            var cue = new MediaCue { FilePath = $"ndi://{System.Environment.MachineName} (Test Pattern)", Title = "NDI Test Pattern" };
+            _playlist.Add(cue);
+            _conductor.UpdatePlaylistTopology(_playlist);
+            
             // Use the vestigial WinForms reference you already have to discover screens
             var screens = System.Windows.Forms.Screen.AllScreens;
             if (screens.Length > 1) {
@@ -266,54 +275,31 @@ namespace MPlaylistApp
         {
             if (_isPaused && _activePlayingCue != null)
             {
-                EngineInterop.mplaylist_resume();
+                _conductor.TransportPlay();
                 _isPaused = false;
                 StatusText.Text = $"Resumed: {_activePlayingCue.Title}";
                 return;
             }
 
-            if (PlaylistUI.Items.Count > 0)
+            if (PlaylistUI.SelectedIndex >= 0)
             {
-                int targetIndex = PlaylistUI.SelectedIndex;
-                if (targetIndex == -1 && _playlist.Count > 0) targetIndex = 0;
-                if (targetIndex < 0) return;
-
-                var nextCue = _playlist[targetIndex];
-                uint transMs = nextCue.TransitionMs;
-                long inHnsecs = (long)nextCue.InPointHNS;
-                long outHnsecs = (long)nextCue.OutPointHNS;
-
-                foreach (var c in _playlist)
-                {
-                    c.IsActivePlaying = false;
-                }
-                nextCue.IsActivePlaying = true;
-
-                // Fire the CURRENT target
-                EngineInterop.mplaylist_fire_cue((uint)targetIndex, transMs, inHnsecs, outHnsecs);
-                EngineInterop.mplaylist_set_volume_db((float)nextCue.VolumeDb);
-                
-                // Inform the Conductor of the manual override
-                _conductor.SetActiveCue(nextCue);
-                
-                // POST-Advance the UI selection
-                if (_playlist.Count > 0)
-                {
-                    PlaylistUI.SelectedIndex = (targetIndex + 1) % _playlist.Count;
-                }
-                StatusText.Text = $"Playing Cue #{targetIndex + 1}";
-                
-                // Assign active cue and remove debounce
-                _activePlayingCue = nextCue;
+                _conductor.TransportJumpToCue(PlaylistUI.SelectedIndex);
+                PlaylistUI.SelectedItem = null; // Clear selection to restore sequential firing
                 _isPaused = false;
+                StatusText.Text = "Forced Cue Jump";
+                return;
             }
+
+            _conductor.TransportFireNext();
+            _isPaused = false;
+            StatusText.Text = "Fired Next Cue";
         }
 
         private void OnPauseClicked(object sender, RoutedEventArgs e)
         {
             if (_activePlayingCue != null && !_isPaused)
             {
-                EngineInterop.mplaylist_pause();
+                _conductor.TransportPause();
                 _isPaused = true;
                 StatusText.Text = $"Paused: {_activePlayingCue.Title}";
             }
@@ -321,13 +307,7 @@ namespace MPlaylistApp
 
         private void OnStopClicked(object sender, RoutedEventArgs e)
         {
-            EngineInterop.mplaylist_stop();
-            if (_activePlayingCue != null)
-            {
-                _activePlayingCue.IsActivePlaying = false;
-                _activePlayingCue = null;
-            }
-            _conductor.SetActiveCue(null);
+            _conductor.TransportStop();
             _isPaused = false;
             StatusText.Text = "Stopped";
         }
@@ -340,6 +320,7 @@ namespace MPlaylistApp
 
         private void MainWindow_Closed(object? sender, EventArgs e)
         {
+            _oscServer?.Stop();
             _conductor.Stop();
             // 3.5 Dispose FileSystemWatchers
             _fileMonitor?.Dispose();

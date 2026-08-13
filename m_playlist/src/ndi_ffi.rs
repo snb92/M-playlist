@@ -40,6 +40,29 @@ pub struct NDIlib_video_frame_v2_t {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
+pub struct NDIlib_recv_instance_t {
+    pub ptr: *mut std::ffi::c_void,
+}
+unsafe impl Send for NDIlib_recv_instance_t {}
+unsafe impl Sync for NDIlib_recv_instance_t {}
+
+#[repr(C)]
+pub struct NDIlib_source_t {
+    pub p_ndi_name: *const i8,
+    pub p_url_address: *const i8,
+}
+
+#[repr(C)]
+pub struct NDIlib_recv_create_v3_t {
+    pub source_to_connect_to: NDIlib_source_t,
+    pub color_format: i32,
+    pub bandwidth: i32,
+    pub allow_video_fields: bool,
+    pub p_ndi_recv_name: *const i8,
+}
+
+#[repr(C)]
 pub struct NDIlib_audio_frame_v2_t {
     pub sample_rate: i32,
     pub no_channels: i32,
@@ -60,6 +83,17 @@ pub type fn_NDIlib_send_send_audio_v2 = unsafe extern "C" fn(p_instance: NDIlib_
 pub type fn_NDIlib_send_destroy = unsafe extern "C" fn(p_instance: NDIlib_send_instance_t);
 pub type fn_NDIlib_destroy = unsafe extern "C" fn();
 
+pub type fn_NDIlib_recv_create_v3 = unsafe extern "C" fn(p_create_settings: *const NDIlib_recv_create_v3_t) -> NDIlib_recv_instance_t;
+pub type fn_NDIlib_recv_capture_v2 = unsafe extern "C" fn(
+    p_instance: NDIlib_recv_instance_t,
+    p_video_data: *mut NDIlib_video_frame_v2_t,
+    p_audio_data: *mut NDIlib_audio_frame_v2_t,
+    p_metadata: *mut std::ffi::c_void,
+    timeout_in_ms: u32,
+) -> i32;
+pub type fn_NDIlib_recv_free_video_v2 = unsafe extern "C" fn(p_instance: NDIlib_recv_instance_t, p_video_data: *const NDIlib_video_frame_v2_t);
+pub type fn_NDIlib_recv_destroy = unsafe extern "C" fn(p_instance: NDIlib_recv_instance_t);
+
 pub struct NdiLibrary {
     handle: HMODULE,
     pub NDIlib_initialize: fn_NDIlib_initialize,
@@ -68,6 +102,10 @@ pub struct NdiLibrary {
     pub NDIlib_send_send_audio_v2: fn_NDIlib_send_send_audio_v2,
     pub NDIlib_send_destroy: fn_NDIlib_send_destroy,
     pub NDIlib_destroy: fn_NDIlib_destroy,
+    pub NDIlib_recv_create_v3: fn_NDIlib_recv_create_v3,
+    pub NDIlib_recv_capture_v2: fn_NDIlib_recv_capture_v2,
+    pub NDIlib_recv_free_video_v2: fn_NDIlib_recv_free_video_v2,
+    pub NDIlib_recv_destroy: fn_NDIlib_recv_destroy,
 }
 
 impl NdiLibrary {
@@ -100,6 +138,11 @@ impl NdiLibrary {
             let send_audio = get_proc!("NDIlib_send_send_audio_v2", fn_NDIlib_send_send_audio_v2);
             let send_destroy = get_proc!("NDIlib_send_destroy", fn_NDIlib_send_destroy);
             let destroy = get_proc!("NDIlib_destroy", fn_NDIlib_destroy);
+            
+            let recv_create = get_proc!("NDIlib_recv_create_v3", fn_NDIlib_recv_create_v3);
+            let recv_capture = get_proc!("NDIlib_recv_capture_v2", fn_NDIlib_recv_capture_v2);
+            let recv_free = get_proc!("NDIlib_recv_free_video_v2", fn_NDIlib_recv_free_video_v2);
+            let recv_destroy = get_proc!("NDIlib_recv_destroy", fn_NDIlib_recv_destroy);
 
             Ok(Self {
                 handle,
@@ -109,6 +152,10 @@ impl NdiLibrary {
                 NDIlib_send_send_audio_v2: send_audio,
                 NDIlib_send_destroy: send_destroy,
                 NDIlib_destroy: destroy,
+                NDIlib_recv_create_v3: recv_create,
+                NDIlib_recv_capture_v2: recv_capture,
+                NDIlib_recv_free_video_v2: recv_free,
+                NDIlib_recv_destroy: recv_destroy,
             })
         }
     }

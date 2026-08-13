@@ -1,6 +1,12 @@
 # Changelog
 
 ## [Unreleased]
+- **Architecture**: Executed "The Transition Lock" (Phase 14b.2) - Implemented a strict `DateTime` execution lock in the C# `EngineConductor` to mathematically insulate the Rust backend from being overwritten by timeless lookahead logic during visual crossfades.
+- **Architecture**: Executed "Phase 14b" (NDI Receiver & UI Sync). Built a zero-allocation Ping-Pong buffer in System RAM for isolated background network receipt, natively mapping directly to DX11 VRAM.
+- **UI**: Fixed state desynchronization in C# where mouse-click selections were bypassed by linear state machine loops. The PLAY button now forcefully leaps to operator-selected indices.
+- **Architecture**: Executed "The Muscle Lobotomy" (Phase 14a.2) - eradicated the internal `cues` array from the Rust backend to ensure the C# Brain holds absolute authority.
+- **FFI**: Updated `mplaylist_fire_cue` C-ABI to accept the full `FfiCue` structural payload rather than an index integer, enabling deterministic dispatch.
+- **UI**: Mapped the PLAY / FIRE NEXT button to invoke a manual `TransportFireNext()` drop guillotine to support infinite live cues (NDI/WIC).
 ### Added
 - Initialized project with `CONTEXT.md`, `TODO.md`, and `CHANGELOG.md` to track zero-trust / OS-native architectural constraints.
 - Created `m_playlist` Rust library compiled as `cdylib` and locked `windows-rs` supply chain via `cargo vendor`.
@@ -183,4 +189,5 @@
 ### Fixed
 - Lobotomized \mplaylist_resize_swapchain\ to permanently decouple the master render resolution from the C# UI window dimension, curing the \DXGI_ERROR_INVALID_CALL\ collision upon \CopyResource\.
 - Hard-restored \fi.rs\ to pristine architectural state, surgically injecting missing boundaries without breaking the underlying string-to-brush logic.
-
+- **[2026-08-13]** Executed Phase 13a: OSC State Injection. Transplanted the OSC network topology from the Rust Muscle to the C# Brain. Created a pure System.Net.Sockets.UdpClient OSC parser in C#. Exposed a unified Transport API on EngineConductor for Play, Pause, Stop, and JumpToCue commands.
+- **[2026-08-13]** Executed Phase 14a: NDI Ingestion (Structural Primitive). Upgraded Modality primitives across C-ABI boundary. Mapped NDI Receiver function pointers natively.

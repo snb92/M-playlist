@@ -6,8 +6,6 @@ use crate::graphics::Dx11Compositor;
 use crate::media_engine::MediaEngine;
 
 pub struct Playlist {
-    cues: Vec<crate::app_logic::EngineCue>,
-    current_index: usize,
     deck_a: Option<MediaEngine>,
     deck_b: Option<MediaEngine>,
     pub is_deck_a_active: bool,
@@ -17,13 +15,12 @@ pub struct Playlist {
     pub ndi_enabled: bool,
     pub pending_fire: bool,
     pub incoming_is_static: bool,
+    pub ndi_run_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl Playlist {
     pub fn new() -> Self {
         Self {
-            cues: Vec::new(),
-            current_index: 0,
             deck_a: None,
             deck_b: None,
             is_deck_a_active: false,
@@ -33,42 +30,57 @@ impl Playlist {
             ndi_enabled: false,
             pending_fire: false,
             incoming_is_static: false,
+            ndi_run_flag: None,
         }
     }
 
-    pub fn load_cue(&mut self, cue: crate::app_logic::EngineCue) {
-        self.cues.push(cue);
-        println!("M-Playlist [LOGIC]: Added Cue #{} - {}", self.cues.len(), self.cues.last().unwrap().filepath);
+    pub fn load_cue(&mut self, _cue: crate::app_logic::EngineCue) {
+        // Obsoleted by Muscle Lobotomy. State maintained in C# Brain.
     }
 
     pub fn fire_cue(
         &mut self,
-        cue_index: u32,
-        transition_ms: u32,
-        in_point_hnsecs: i64,
-        out_point_hnsecs: i64,
+        target_cue: &crate::app_logic::OwnedCue,
+        _tx: &std::sync::mpsc::Sender<crate::app_logic::EngineCommand>,
         ring_a: Arc<AudioRingBuffer>,
         ring_b: Arc<AudioRingBuffer>,
         blend_factor: Arc<std::sync::atomic::AtomicU32>,
         clock: Arc<MasterClock>,
         graphics: Arc<Dx11Compositor>,
     ) {
-        if self.cues.is_empty() { return; }
+        // Map to EngineCue for MediaEngine legacy compatibility
+        let engine_cue = crate::app_logic::EngineCue {
+            filepath: target_cue.filepath.clone(),
+            in_point_hnsecs: target_cue.in_point_hnsecs,
+            out_point_hnsecs: target_cue.out_point_hnsecs,
+            is_looping: target_cue.is_looping != 0,
+            hold_last_frame: target_cue.hold_last_frame != 0,
+            transition_duration_hnsecs: target_cue.transition_duration_hnsecs,
+            modality: target_cue.modality,
+        };
+        let cue = &engine_cue;
 
-        self.current_index = (cue_index as usize) % self.cues.len();
-
-        // UPDATE the stored cue dynamically to reflect UI adjustments!
-        self.cues[self.current_index].in_point_hnsecs = in_point_hnsecs;
-        self.cues[self.current_index].out_point_hnsecs = out_point_hnsecs;
-
-        let cue = &self.cues[self.current_index];
-        let is_static = cue.is_static_image;
+        // Both WIC (1) and NDI (2) must evaluate as static/timeless to bypass WMF MediaEngine temporal logic.
+        let is_static = cue.modality == 1 || cue.modality == 2;
+        let transition_ms = target_cue.transition_duration_hnsecs / 10000;
 
         let has_active_deck = self.deck_a.is_some() || self.deck_b.is_some() || blend_factor.load(std::sync::atomic::Ordering::Acquire) != 0; // fallback just in case
         let transition_hnsecs = (transition_ms as i64) * 10_000;
         
         self.pending_fire = true;
-        self.incoming_is_static = is_static;
+        self.incoming_is_static = cue.modality == 1 || cue.modality == 2;
+
+        if cue.modality == 2 {
+            println!("M-Playlist [NDI]: Intercepted Modality 2! Ready to spawn receiver.");
+            if let Some(flag) = self.ndi_run_flag.take() {
+                flag.store(false, std::sync::atomic::Ordering::Release);
+            }
+            let new_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+            self.ndi_run_flag = Some(new_flag.clone());
+            
+            let rx_buffer = if !self.is_deck_a_active { graphics.ndi_rx_a.clone() } else { graphics.ndi_rx_b.clone() };
+            crate::ndi_receiver::spawn_receiver(cue.filepath.clone(), rx_buffer, new_flag);
+        }
 
         if transition_hnsecs > 0 && has_active_deck {
             self.transition_duration_hnsecs = transition_hnsecs;
@@ -79,11 +91,13 @@ impl Playlist {
                 // graphics.clear_deck(0); - we don't clear, might have static image!
                 if is_static {
                     self.deck_a = None;
-                    use std::os::windows::ffi::OsStrExt;
-                    let mut wpath: Vec<u16> = std::ffi::OsStr::new(&cue.filepath).encode_wide().collect();
-                    wpath.push(0);
-                    if let Ok(texture) = crate::wic::load_image_to_texture(&graphics.device, wpath.as_ptr()) {
-                        let _ = graphics.update_deck_static_texture(0, &texture);
+                    if cue.modality == 1 {
+                        use std::os::windows::ffi::OsStrExt;
+                        let mut wpath: Vec<u16> = std::ffi::OsStr::new(&cue.filepath).encode_wide().collect();
+                        wpath.push(0);
+                        if let Ok(texture) = crate::wic::load_image_to_texture(&graphics.device, wpath.as_ptr()) {
+                            let _ = graphics.update_deck_static_texture(0, &texture);
+                        }
                     }
                 } else {
                     self.deck_a = Some(MediaEngine::new(0).unwrap());
@@ -97,11 +111,13 @@ impl Playlist {
                 ring_b.flush();
                 if is_static {
                     self.deck_b = None;
-                    use std::os::windows::ffi::OsStrExt;
-                    let mut wpath: Vec<u16> = std::ffi::OsStr::new(&cue.filepath).encode_wide().collect();
-                    wpath.push(0);
-                    if let Ok(texture) = crate::wic::load_image_to_texture(&graphics.device, wpath.as_ptr()) {
-                        let _ = graphics.update_deck_static_texture(1, &texture);
+                    if cue.modality == 1 {
+                        use std::os::windows::ffi::OsStrExt;
+                        let mut wpath: Vec<u16> = std::ffi::OsStr::new(&cue.filepath).encode_wide().collect();
+                        wpath.push(0);
+                        if let Ok(texture) = crate::wic::load_image_to_texture(&graphics.device, wpath.as_ptr()) {
+                            let _ = graphics.update_deck_static_texture(1, &texture);
+                        }
                     }
                 } else {
                     self.deck_b = Some(MediaEngine::new(1).unwrap());
@@ -120,11 +136,13 @@ impl Playlist {
                 
                 if is_static {
                     self.deck_a = None;
-                    use std::os::windows::ffi::OsStrExt;
-                    let mut wpath: Vec<u16> = std::ffi::OsStr::new(&cue.filepath).encode_wide().collect();
-                    wpath.push(0);
-                    if let Ok(texture) = crate::wic::load_image_to_texture(&graphics.device, wpath.as_ptr()) {
-                        let _ = graphics.update_deck_static_texture(0, &texture);
+                    if cue.modality == 1 {
+                        use std::os::windows::ffi::OsStrExt;
+                        let mut wpath: Vec<u16> = std::ffi::OsStr::new(&cue.filepath).encode_wide().collect();
+                        wpath.push(0);
+                        if let Ok(texture) = crate::wic::load_image_to_texture(&graphics.device, wpath.as_ptr()) {
+                            let _ = graphics.update_deck_static_texture(0, &texture);
+                        }
                     }
                 } else {
                     self.deck_a = Some(MediaEngine::new(0).unwrap());
@@ -139,11 +157,13 @@ impl Playlist {
                 
                 if is_static {
                     self.deck_b = None;
-                    use std::os::windows::ffi::OsStrExt;
-                    let mut wpath: Vec<u16> = std::ffi::OsStr::new(&cue.filepath).encode_wide().collect();
-                    wpath.push(0);
-                    if let Ok(texture) = crate::wic::load_image_to_texture(&graphics.device, wpath.as_ptr()) {
-                        let _ = graphics.update_deck_static_texture(1, &texture);
+                    if cue.modality == 1 {
+                        use std::os::windows::ffi::OsStrExt;
+                        let mut wpath: Vec<u16> = std::ffi::OsStr::new(&cue.filepath).encode_wide().collect();
+                        wpath.push(0);
+                        if let Ok(texture) = crate::wic::load_image_to_texture(&graphics.device, wpath.as_ptr()) {
+                            let _ = graphics.update_deck_static_texture(1, &texture);
+                        }
                     }
                 } else {
                     self.deck_b = Some(MediaEngine::new(1).unwrap());
@@ -154,8 +174,6 @@ impl Playlist {
                 }
             }
         }
-
-        self.current_index = (self.current_index + 1) % self.cues.len();
     }
 
     pub fn scrub(&self, target_hnsecs: i64) {

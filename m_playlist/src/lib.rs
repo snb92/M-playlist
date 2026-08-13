@@ -5,11 +5,12 @@ pub mod ffi;
 pub mod graphics;
 pub mod playlist;
 pub mod media_engine;
-pub mod osc_server;
+
 pub mod app_logic;
 pub mod ndi_sys;
 pub mod ndi_transmitter;
 pub mod ndi_ffi;
+pub mod ndi_receiver;
 pub mod wic;
 
 // --- PHASE 8 & 9 FFI BOUNDARIES ---

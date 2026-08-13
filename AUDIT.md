@@ -263,3 +263,20 @@ This file contains a timestamped log of all findings, decisions, validations, an
 - **[2026-08-12] FINDING / DECISION:** Identified structural desync in static asset rendering. EngineConductor blindly dispatched static assets to mplaylist_load_cue during B-Deck preload, which failed to actually load WIC frames into VRAM.
 - **IMPACT:** Triggering a static image resulted in a blank output because the asset was queued but never decoded into the DX11 compositor surface.
 - **RESOLUTION:** Executed Phase 11b. Upgraded the Rust ire_cue function to directly decode WIC frames to VRAM natively at the exact moment of execution if the incoming cue is static. Bypassed Media Foundation instantiation seamlessly without stalling the transition mathematics.
+- **[2026-08-13] FINDING / DECISION:** Identified that the Rust Micro-State Muscle bypassed the C# Brain by holding a raw UDP socket for OSC, breaking deterministic sequencing (e.g., jumping to cues) because Rust lacks the Playlist concept.
+- **IMPACT:** A fatal architectural anti-pattern violating the Brain/Muscle separation and breaking transport logic for networked remote control.
+- **[2026-08-13] FINDING / DECISION:** Identified requirement to ingest NDI network streams as First-Class Cues without stalling the GPU or relying on external Rust crates.
+- **IMPACT:** A lack of NDI receiver bindings and polymorphic routing meant network video couldn't enter the A/B Deck crossfader natively.
+- **RESOLUTION:** Executed Phase 14a. Reconstructed `NDIlib_recv_*` C-ABI definitions in `ndi_ffi.rs`. Upgraded `FfiCue` from binary `is_static_image` to universal `CueModality` enum (WMFTemporal, WICStatic, NDILive). Decoupled `EngineConductor.cs` and `playlist.rs` dispatch logic to route modalities natively and bypass the execution guillotine for infinite-time network sources. Pipeline Sync completed successfully.
+
+- **[2026-08-13 17:25:00] FINDING / DECISION:** C# UI dynamically appending indices to Rust's static `cues` array resulted in a fatal index desynchronization, violating the "Blind Muscle" architecture.
+- **IMPACT:** `mplaylist_fire_cue(index)` would fire the wrong modality/cue if the C# Brain advanced or repeated indices out of sequence.
+- **RESOLUTION:** Executed Phase 14a.2 (The Muscle Lobotomy). Eradicated the `cues` array from the Rust backend. Re-mapped `mplaylist_fire_cue` C-ABI to accept the full `FfiCue` structural payload in real-time. Added a manual `TransportFireNext()` guillotine drop to allow operators to forcefully end infinite live cues (NDI/WIC).
+
+- **[2026-08-13 17:46:00] FINDING / DECISION:** C# UI "PLAY / FIRE NEXT" button was blindly executing the linear 5-second lookahead cue (`TransportFireNext`), betraying the operator's physical click selection on the `PlaylistUI` ListBox.
+- **IMPACT:** Engine jumped to incorrect (often blank) cues instead of forcing an override to the highlighted cue.
+- **RESOLUTION:** Executed Phase 14b. Synchronized UI selection by injecting an override `TransportJumpToCue` condition in the Play handler when an item is selected. Built a zero-allocation `NdiPingPong` lock-free background receiver thread in Rust to ingest network BGRA frames and natively Map/Unmap them to a `D3D11_USAGE_DYNAMIC` texture directly inside the single-threaded DX11 Render Loop context, avoiding GPU thread collisions.
+
+- **[2026-08-13 18:10:00] FINDING / DECISION:** C# ConductorLoop timeless lookahead aggressively overwrote the Standby Deck during visual crossfades when transitioning from Timeless modalities (PNG/NDI).
+- **IMPACT:** Transition visuals would immediately drop because the target deck was overwritten by the 5-second lookahead logic before the crossfade completed.
+- **RESOLUTION:** Executed Phase 14b.2 (The Transition Lock). Implemented a strict `DateTime` execution lock in the EngineConductor to mathematically insulate the Rust Muscle from C# state-thrashing during transitions.
