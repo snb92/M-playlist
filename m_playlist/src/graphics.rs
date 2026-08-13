@@ -1,7 +1,38 @@
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Mutex, mpsc::SyncSender};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, AtomicBool};
+use std::sync::{Mutex, mpsc::SyncSender, RwLock};
+
+pub static SHOW_OVERLAY: AtomicBool = AtomicBool::new(false);
+pub static OVERLAY_TEXT: RwLock<Vec<u16>> = RwLock::new(Vec::new());
+
 use crate::ndi_transmitter::{NdiPayload, NdiVideoFrame};
 use windows::core::{ComInterface, Result};
+
+#[derive(Clone, Copy, Debug)]
+pub struct SpatialColorState {
+    pub crop_left: f32,
+    pub crop_top: f32,
+    pub crop_right: f32,
+    pub crop_bottom: f32,
+    pub pan_x: f32,
+    pub pan_y: f32,
+    pub zoom: f32,
+    pub brightness: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+}
+
+pub static SPATIAL_COLOR_STATE: RwLock<SpatialColorState> = RwLock::new(SpatialColorState {
+    crop_left: 0.0,
+    crop_top: 0.0,
+    crop_right: 0.0,
+    crop_bottom: 0.0,
+    pan_x: 0.0,
+    pan_y: 0.0,
+    zoom: 1.0,
+    brightness: 0.0,
+    contrast: 1.0,
+    saturation: 1.0,
+});
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Direct3D::{
     D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_1, ID3DBlob, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
@@ -47,6 +78,9 @@ SamplerState smp : register(s0);
 cbuffer BlendBuffer : register(b0) { 
     float blendFactor; float aspectA; float aspectB; float aspectOut; 
     float4x4 invHomography;
+    float cropLeft; float cropTop; float cropRight; float cropBottom;
+    float panX; float panY; float zoom; float _pad0;
+    float brightness; float contrast; float saturation; float _pad1;
 };
 
 float2 FitAspect(float2 uv, float texAspect, float outAspect) {
@@ -69,7 +103,8 @@ float4 PS_Main(VS_OUT input) : SV_TARGET {
     float2 final_uv = uvw.xy / uvw.z;
     
     // 3. Render black outside the bounds of the warped quad
-    if (final_uv.x < 0.0 || final_uv.x > 1.0 || final_uv.y < 0.0 || final_uv.y > 1.0) {
+    final_uv = (final_uv - 0.5) / zoom + 0.5 - float2(panX, panY);
+    if (final_uv.x < cropLeft || final_uv.x > (1.0 - cropRight) || final_uv.y < cropTop || final_uv.y > (1.0 - cropBottom)) {
         return float4(0, 0, 0, 1);
     }
     
@@ -85,17 +120,38 @@ float4 PS_Main(VS_OUT input) : SV_TARGET {
         colorB = texB.Sample(smp, uvB);
     }
     
-    return lerp(colorA, colorB, blendFactor);
+    float4 final_color = lerp(colorA, colorB, blendFactor);
+    final_color.rgb = (final_color.rgb - 0.5) * contrast + 0.5 + brightness;
+    float luma = dot(final_color.rgb, float3(0.299, 0.587, 0.114));
+    final_color.rgb = lerp(float3(luma, luma, luma), final_color.rgb, saturation);
+    return saturate(final_color);
 }
 \0";
 
 #[repr(C, align(16))]
+#[derive(Debug, Clone, Copy)]
 pub struct BlendData {
     pub blend_factor: f32,
     pub aspect_a: f32,
     pub aspect_b: f32,
     pub aspect_out: f32,
+    
     pub inv_homography: [f32; 16],
+    
+    pub crop_left: f32,
+    pub crop_top: f32,
+    pub crop_right: f32,
+    pub crop_bottom: f32,
+    
+    pub pan_x: f32,
+    pub pan_y: f32,
+    pub zoom: f32,
+    pub _pad0: f32,
+    
+    pub brightness: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+    pub _pad1: f32,
 }
 
 fn calculate_inverse_homography(geometry: &[[f32; 4]; 4]) -> [f32; 16] {
@@ -163,8 +219,8 @@ pub struct Dx11Compositor {
     pixel_shader: ID3D11PixelShader,
     sampler: ID3D11SamplerState,
     constant_buffer: ID3D11Buffer,
-    pub staging_a: Mutex<Option<(ID3D11Texture2D, u32, SendableSample)>>,
-    pub staging_b: Mutex<Option<(ID3D11Texture2D, u32, SendableSample)>>,
+    pub staging_a: Mutex<Option<(ID3D11Texture2D, u32, Option<SendableSample>)>>,
+    pub staging_b: Mutex<Option<(ID3D11Texture2D, u32, Option<SendableSample>)>>,
     pub ndi_staging_textures: Mutex<[Option<ID3D11Texture2D>; 3]>,
     pub ndi_staging_index: Mutex<usize>,
     pub frame_count: AtomicU64,
@@ -176,6 +232,7 @@ pub struct Dx11Compositor {
     pub dwrite_factory: windows::Win32::Graphics::DirectWrite::IDWriteFactory,
     pub text_format: windows::Win32::Graphics::DirectWrite::IDWriteTextFormat,
     pub text_brush: windows::Win32::Graphics::Direct2D::ID2D1SolidColorBrush,
+    pub output_swapchain: std::sync::Mutex<Option<windows::Win32::Graphics::Dxgi::IDXGISwapChain1>>,
 }
 
 impl Dx11Compositor {
@@ -393,6 +450,7 @@ impl Dx11Compositor {
                 dwrite_factory,
                 text_format,
                 text_brush,
+                output_swapchain: std::sync::Mutex::new(None),
             })
         }
     }
@@ -402,7 +460,15 @@ impl Dx11Compositor {
         if let Ok(mut staging_lock) = staging_mutex.lock() {
             // TRUE ZERO-COPY: Hold the COM reference and the specific slice index!
             // We MUST also hold the IMFSample reference so MF doesn't overwrite this slice in its pool!
-            *staging_lock = Some((src_texture.clone(), subresource_index, SendableSample(sample.clone())));
+            *staging_lock = Some((src_texture.clone(), subresource_index, Some(SendableSample(sample.clone()))));
+        }
+        Ok(())
+    }
+
+    pub fn update_deck_static_texture(&self, deck_id: u8, src_texture: &ID3D11Texture2D) -> Result<()> {
+        let staging_mutex = if deck_id == 0 { &self.staging_a } else { &self.staging_b };
+        if let Ok(mut staging_lock) = staging_mutex.lock() {
+            *staging_lock = Some((src_texture.clone(), 0, None));
         }
         Ok(())
     }
@@ -439,7 +505,7 @@ impl Dx11Compositor {
             let lock_a = self.staging_a.lock().unwrap();
             let lock_b = self.staging_b.lock().unwrap();
 
-            let get_aspect = |tex_opt: &Option<(ID3D11Texture2D, u32, SendableSample)>| -> f32 {
+            let get_aspect = |tex_opt: &Option<(ID3D11Texture2D, u32, Option<SendableSample>)>| -> f32 {
                 if let Some((tex, _, _)) = tex_opt {
                     let mut desc = D3D11_TEXTURE2D_DESC::default();
                     tex.GetDesc(&mut desc);
@@ -454,9 +520,22 @@ impl Dx11Compositor {
             let aspect_b = get_aspect(&*lock_b);
             let aspect_out = if current_h > 0 { current_w as f32 / current_h as f32 } else { 1.0 };
 
+            let spatial_state = *SPATIAL_COLOR_STATE.read().unwrap();
             let blend_data = BlendData {
                 blend_factor, aspect_a, aspect_b, aspect_out,
                 inv_homography: calculate_inverse_homography(geometry),
+                crop_left: spatial_state.crop_left,
+                crop_top: spatial_state.crop_top,
+                crop_right: spatial_state.crop_right,
+                crop_bottom: spatial_state.crop_bottom,
+                pan_x: spatial_state.pan_x,
+                pan_y: spatial_state.pan_y,
+                zoom: spatial_state.zoom,
+                _pad0: 0.0,
+                brightness: spatial_state.brightness,
+                contrast: spatial_state.contrast,
+                saturation: spatial_state.saturation,
+                _pad1: 0.0,
             };
             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
             self.context.Map(&self.constant_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped))?;
@@ -466,7 +545,7 @@ impl Dx11Compositor {
             self.context.VSSetConstantBuffers(0, Some(&[Some(self.constant_buffer.clone())]));
             self.context.PSSetConstantBuffers(0, Some(&[Some(self.constant_buffer.clone())]));
 
-            let create_srv = |tex_opt: &Option<(ID3D11Texture2D, u32, SendableSample)>| -> Result<Option<ID3D11ShaderResourceView>> {
+            let create_srv = |tex_opt: &Option<(ID3D11Texture2D, u32, Option<SendableSample>)>| -> Result<Option<ID3D11ShaderResourceView>> {
                 if let Some((tex, subresource, _)) = tex_opt {
                     let mut desc = D3D11_TEXTURE2D_DESC::default();
                     tex.GetDesc(&mut desc);
@@ -510,41 +589,33 @@ impl Dx11Compositor {
 
             self.context.Draw(3, 0);
 
-            // 3. DIRECT2D TYPOGRAPHY PASS (Hardware Accelerated over VRAM)
-            self.d2d_render_target.BeginDraw();
-            
-            let text: Vec<u16> = "M-PLAYLIST BROADCAST CORE: 1080p/60 DIRECT2D ACTIVE".encode_utf16().collect();
-            let text_rect = windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F { 
-                left: 50.0, top: 50.0, right: 1870.0, bottom: 200.0 
-            };
-            
-            self.d2d_render_target.DrawText(
-                &text,
-                &self.text_format,
-                &text_rect,
-                &self.text_brush,
-                windows::Win32::Graphics::Direct2D::D2D1_DRAW_TEXT_OPTIONS_NONE,
-                windows::Win32::Graphics::DirectWrite::DWRITE_MEASURING_MODE_NATURAL,
-            );
-            
-            self.d2d_render_target.EndDraw(None, None).unwrap();
+            let src_tex: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D = self.swapchain.GetBuffer(0)?;
+            let src_res: ID3D11Resource = src_tex.cast()?;
 
-            // STRIKE 2: The CopyResource & Delayed Map Pipeline
+            // 2. The Clean Feed Playout Tap
+            if let Ok(lock) = self.output_swapchain.lock() {
+                if let Some(out_swap) = lock.as_ref() {
+                    if let Ok(dest_tex) = out_swap.GetBuffer::<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D>(0) {
+                        let dest_res: ID3D11Resource = dest_tex.cast()?;
+                        self.context.CopyResource(&dest_res, &src_res);
+                        let _ = out_swap.Present(0, 0); // VSync off (0,0) to prevent UI stalling
+                    }
+                }
+            }
+
+            // 3. The Clean Feed NDI Tap
             let frame = self.frame_count.load(Ordering::Relaxed);
             let mut ndi_staging_lock = self.ndi_staging_textures.lock().unwrap();
             let mut index_lock = self.ndi_staging_index.lock().unwrap();
             let current_index = *index_lock;
             let tx_opt = self.ndi_tx.lock().unwrap();
 
-            // Hardware Copy
             let target_staging_opt = &ndi_staging_lock[current_index];
             if let Some(target_staging) = target_staging_opt {
                 let dest_staging_res: ID3D11Resource = target_staging.cast()?;
-                let src_backbuffer_res: ID3D11Resource = backbuffer.cast()?;
-                self.context.CopyResource(&dest_staging_res, &src_backbuffer_res);
+                self.context.CopyResource(&dest_staging_res, &src_res);
             }
 
-            // Map Oldest
             let read_index = (current_index + 1) % 3;
             if frame >= 2 {
                 let mapped_tex_opt = &ndi_staging_lock[read_index];
@@ -576,10 +647,8 @@ impl Dx11Compositor {
                             buffer.reserve(total_bytes - buffer.capacity());
                         }
 
-                        unsafe {
-                            buffer.set_len(total_bytes);
-                            std::ptr::copy_nonoverlapping(mapped_subresource.pData as *const u8, buffer.as_mut_ptr(), total_bytes);
-                        }
+                        buffer.set_len(total_bytes);
+                        std::ptr::copy_nonoverlapping(mapped_subresource.pData as *const u8, buffer.as_mut_ptr(), total_bytes);
                         
                         self.context.Unmap(&mapped_res, 0);
                         
@@ -598,15 +667,45 @@ impl Dx11Compositor {
                 }
             }
 
-            // Advance
             *index_lock = (current_index + 1) % 3;
             self.frame_count.fetch_add(1, Ordering::Relaxed);
+
+            // 4. DIRECT2D TYPOGRAPHY PASS (Control Feed)
+            self.d2d_render_target.BeginDraw();
+            
+            let is_visible = crate::graphics::SHOW_OVERLAY.load(std::sync::atomic::Ordering::Relaxed);
+            if is_visible {
+                let text_opt: Option<Vec<u16>> = {
+                    if let Ok(guard) = crate::graphics::OVERLAY_TEXT.read() {
+                        if !guard.is_empty() { Some(guard.clone()) } else { None }
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some(text_vec) = text_opt {
+                    let text_rect = windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F { 
+                        left: 50.0, top: 50.0, right: 1870.0, bottom: 200.0 
+                    };
+                    
+                    self.d2d_render_target.DrawText(
+                        &text_vec,
+                        &self.text_format,
+                        &text_rect,
+                        &self.text_brush,
+                        windows::Win32::Graphics::Direct2D::D2D1_DRAW_TEXT_OPTIONS_NONE,
+                        windows::Win32::Graphics::DirectWrite::DWRITE_MEASURING_MODE_NATURAL,
+                    );
+                }
+            }
+            
+            self.d2d_render_target.EndDraw(None, None).unwrap();
 
             // Unbind to release references safely
             self.context.PSSetShaderResources(0, Some(&[None, None]));
             self.context.OMSetRenderTargets(None, None);
 
-            let _ = self.swapchain.Present(1, 0); 
+            let _ = self.swapchain.Present(1, 0);
         }
         Ok(())
     }

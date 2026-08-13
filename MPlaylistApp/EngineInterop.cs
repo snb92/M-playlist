@@ -12,6 +12,7 @@ namespace MPlaylistApp
         public byte IsLooping;
         public byte HoldLastFrame;
         public long TransitionDurationHnsecs;
+        public byte IsStaticImage;
     }
 
     public static class EngineInterop
@@ -39,6 +40,9 @@ namespace MPlaylistApp
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern bool mplaylist_set_window(IntPtr hwnd);
 
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+        public static extern bool mplaylist_load_image([MarshalAs(UnmanagedType.LPWStr)] string filePath);
+
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern bool mplaylist_load_cue(FfiCue cue);
 
@@ -54,7 +58,8 @@ namespace MPlaylistApp
                     OutPointHnsecs = (long)model.OutPointHNS,
                     IsLooping = (byte)(model.IsLooping ? 1 : 0),
                     HoldLastFrame = (byte)(model.HoldLastFrame ? 1 : 0),
-                    TransitionDurationHnsecs = (long)(model.TransitionDuration * 10000000.0)
+                    TransitionDurationHnsecs = (long)(model.TransitionDuration * 10000000.0),
+                    IsStaticImage = (byte)(model.IsStaticImage ? 1 : 0)
                 };
                 mplaylist_load_cue(ffiCue);
             }
@@ -124,6 +129,13 @@ namespace MPlaylistApp
         public static extern void mplaylist_get_audio_telemetry(int deck_id, out int out_occupancy, out int out_capacity);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void mplaylist_get_audio_levels(out float left, out float right);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+        public static extern void mplaylist_set_overlay_text(bool show, string text);
+
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void mplaylist_resize_swapchain(uint width, uint height);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
@@ -133,5 +145,16 @@ namespace MPlaylistApp
             float bl_x, float bl_y,
             float br_x, float br_y
         );
+
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void mplaylist_set_spatial_color(
+            float crop_left, float crop_top, float crop_right, float crop_bottom,
+            float pan_x, float pan_y, float zoom,
+            float brightness, float contrast, float saturation
+        );
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern bool mplaylist_bind_output_matrix(IntPtr hwnd);
     }
 }

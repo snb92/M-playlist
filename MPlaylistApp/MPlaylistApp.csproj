@@ -15,4 +15,8 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
+  <Target Name="CopyRustEngine" AfterTargets="Build">
+    <!-- Automate the physical transfer of the compiled Rust Native Engine to the C# execution directory -->
+    <Copy SourceFiles="..\m_playlist\target\release\m_playlist.dll" DestinationFolder="$(OutDir)" OverwriteReadOnlyFiles="true" SkipUnchangedFiles="false" />
+  </Target>
 </Project>

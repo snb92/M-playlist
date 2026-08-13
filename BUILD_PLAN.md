@@ -25,26 +25,28 @@ Before we can visualize data or project it to physical monitors, the C# Brain mu
 
 ### Phase 7: The Conductor (Decoupled Execution Logic)
 **The Mission:** Dismantle the UI-bound DispatcherTimer. Architect a dedicated, high-priority background thread in C# that polls the Rust FFI and orchestrates the A/B deck independently of WPF rendering.
-- [ ] Autonomous B-Deck Pre-load (Lookahead)
-- [ ] O(1) Cue ID Dictionary routing
-- [ ] Auto-Advance
-- [ ] Play Count (Looping)
-- [ ] Frame-accurate FFI trigger timing
+- [x] Autonomous B-Deck Pre-load (Lookahead)
+- [x] O(1) Cue ID Dictionary routing
+- [x] Auto-Advance
+- [x] Play Count (Looping)
+- [x] Frame-accurate FFI trigger timing
 
 ### Phase 8: Telemetry & The Audio Dashboard
 **The Mission:** Safely extract thermodynamic data (Peak/RMS) from the Rust lock-free buffers and route it to the WPF UI.
-- [ ] 60fps Visual Waveforms & VU Meters
-- [ ] Global Controls (Master Fader)
-- [ ] Stereo Downmix Toggle
+- [x] 60fps Visual Waveforms & VU Meters
+- [x] Global Controls (Master Fader)
+- [x] Stereo Downmix Toggle
 
 ## 🟡 TIER 2: PIXEL MANIPULATION & OVERLAYS (Formatting the Signal)
 Before we output the signal to secondary monitors, the internal visual composition pipeline must be feature-complete in VRAM.
 
 ### Phase 9: The Typography Bridge & Static Assets
-**The Mission:** Wire the C# Macro-State to the Rust Direct2D hardware bridge established in Phase 6, and architect the static image pipeline.
-- [ ] Live Timecode Overlays (Remaining/Elapsed)
+**The Mission:** Overlay dynamic timecode, network logos (Bugs), and lower-thirds natively on the GPU before SDI/NDI transmission.
+- [x] Lock-Free C-ABI String Bridge (`RwLock<Vec<u16>>`)
+- [x] Elapsed/Remaining Timecode Overlay
+- [ ] Network Bug (Logo) Alpha-Channel Rendering
 - [ ] Zero-allocation .SRT Subtitle Parser
-- [ ] Static Asset Rasterization (.PNG/.JPG holding slides bypassing the Media Foundation video decoder)
+- [x] Static Asset Rasterization (.PNG/.JPG holding slides bypassing the Media Foundation video decoder)
 
 ### Phase 10: Spatial Geometry & GPU Color
 **The Mission:** Inject ID3D11Buffer (Constant Buffers) into the HLSL pixel/vertex shaders to manipulate the active swapchain mathematically.

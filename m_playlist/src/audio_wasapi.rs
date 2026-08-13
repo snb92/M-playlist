@@ -12,7 +12,11 @@ use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject, AvRev
 use crate::audio_ring::AudioRingBuffer;
 use crate::clock::MasterClock;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+// Storing absolute floats in Atomics via f32::to_bits()
+pub static PEAK_L: AtomicU32 = AtomicU32::new(0);
+pub static PEAK_R: AtomicU32 = AtomicU32::new(0);
 
 pub struct WasapiEngine {
     is_running: Arc<AtomicBool>,
@@ -178,6 +182,9 @@ impl WasapiEngine {
                             None
                         };
 
+                        let mut local_max_l = 0.0f32;
+                        let mut local_max_r = 0.0f32;
+
                         for (frame_idx, chunk) in float_buffer.chunks_exact_mut(num_channels).enumerate() {
                             if is_paused {
                                 chunk[0] = 0.0;
@@ -203,12 +210,19 @@ impl WasapiEngine {
                                 }
 
                                 chunk[0] = mixed_l * vol;
+                                if chunk[0].abs() > local_max_l { local_max_l = chunk[0].abs(); }
 
                                 if num_channels > 1 {
                                     chunk[1] = mixed_r * vol;
+                                    if chunk[1].abs() > local_max_r { local_max_r = chunk[1].abs(); }
                                 }
                             }
                         }
+
+                        // Push to global atomics at the end of the buffer cycle using fetch_max
+                        // (IEEE-754 positive floats maintain integer sorting order!)
+                        PEAK_L.fetch_max(local_max_l.to_bits(), Ordering::Relaxed);
+                        PEAK_R.fetch_max(local_max_r.to_bits(), Ordering::Relaxed);
 
                         if let Some(planar) = planar_opt {
                             if let Ok(tx_lock) = thread_ndi_tx.lock() {

@@ -20,6 +20,9 @@ namespace MPlaylistApp
         private MediaCue? _activePlayingCue;
         private bool _isPaused = false;
 
+        private float _smoothedVuL = 0;
+        private float _smoothedVuR = 0;
+
         public MainWindow()
         {
             InitializeComponent();
@@ -53,6 +56,7 @@ namespace MPlaylistApp
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             _videoSurface = new VideoHwndHost();
+            _videoSurface.MessageHook += VideoHost_MessageHook;
             VideoContainer.Child = _videoSurface;
             VideoContainer.SizeChanged += (s, args) => {
                 TriggerVideoResize();
@@ -88,11 +92,64 @@ namespace MPlaylistApp
                         EngineInterop.mplaylist_get_audio_telemetry(0, out int occupancy, out int capacity);
                         double latencyMs = occupancy / 768.0; 
                         
-                        TimecodeText.Text = $"A: {audioTime:F3}s | V: {videoTime:F3}s | Latency: {latencyMs:F2}ms";
-                        
-                        if (!_isUserScrubbing)
+                        if (_activePlayingCue != null && _activePlayingCue.DurationHNS > 0)
                         {
-                            TimelineSlider.Value = videoTime * 10000000.0; 
+                            if (TimelineSlider.Maximum != _activePlayingCue.DurationHNS)
+                            {
+                                TimelineSlider.Maximum = _activePlayingCue.DurationHNS;
+                            }
+                            
+                            TimecodeText.Text = $"A: {TimeSpan.FromSeconds(audioTime).ToString(@"hh\:mm\:ss\:ff")} | V: {TimeSpan.FromSeconds(videoTime).ToString(@"hh\:mm\:ss\:ff")}";
+                            
+                            if (!_isUserScrubbing)
+                                TimelineSlider.Value = _conductor.CurrentVideoTime * 10000000.0;
+
+                            if (OverlayToggle.IsChecked == true && _activePlayingCue != null && _conductor != null)
+                            {
+                                long currentHNS = (long)(_conductor.CurrentVideoTime * 10000000.0);
+                                long remainingHNS = _activePlayingCue.DurationHNS > (ulong)currentHNS 
+                                    ? (long)_activePlayingCue.DurationHNS - currentHNS 
+                                    : 0;
+                                
+                                TimeSpan elapsed = TimeSpan.FromTicks(currentHNS);
+                                TimeSpan remain = TimeSpan.FromTicks(remainingHNS);
+                                
+                                string overlayStr = $"CUE: {_activePlayingCue.Title}\nELAPSED: {elapsed:hh\\:mm\\:ss\\.ff} | REMAINING: -{remain:hh\\:mm\\:ss\\.ff}";
+                                try { EngineInterop.mplaylist_set_overlay_text(true, overlayStr); } catch { }
+                            }
+                            
+                            // Acoustic VU Meter Polling
+                            try
+                            {
+                                EngineInterop.mplaylist_get_audio_levels(out float rawL, out float rawR);
+                                
+                                float dbL = rawL > 0.0001f ? (float)(20.0 * Math.Log10(rawL)) : -60f;
+                                float dbR = rawR > 0.0001f ? (float)(20.0 * Math.Log10(rawR)) : -60f;
+                                
+                                float targetL = Math.Clamp((dbL + 60f) / 60f, 0f, 1f);
+                                float targetR = Math.Clamp((dbR + 60f) / 60f, 0f, 1f);
+
+                                _smoothedVuL = targetL > _smoothedVuL ? targetL : Math.Max(targetL, _smoothedVuL - 0.05f);
+                                _smoothedVuR = targetR > _smoothedVuR ? targetR : Math.Max(targetR, _smoothedVuR - 0.05f);
+                                
+                                // Applying to ScaleX for the horizontal UI bars
+                                MeterLeftScale.ScaleX = float.IsNaN(_smoothedVuL) ? 0 : _smoothedVuL;
+                                MeterRightScale.ScaleX = float.IsNaN(_smoothedVuR) ? 0 : _smoothedVuR;
+                                
+                                // Update Raw Numeric Probes
+                                if (VuTextL != null && VuTextR != null)
+                                {
+                                    VuTextL.Text = dbL <= -59.0f ? "L: -INF" : $"L: {dbL:0.1} dB";
+                                    VuTextR.Text = dbR <= -59.0f ? "R: -INF" : $"R: {dbR:0.1} dB";
+                                    
+                                    VuTextL.Foreground = dbL > -0.1f ? System.Windows.Media.Brushes.Red : System.Windows.Media.Brushes.LimeGreen;
+                                    VuTextR.Foreground = dbR > -0.1f ? System.Windows.Media.Brushes.Red : System.Windows.Media.Brushes.LimeGreen;
+                                }
+                            }
+                            catch (Exception ex) 
+                            { 
+                                if (StatusText != null) StatusText.Text = $"AUDIO FFI TRAP: {ex.Message}"; 
+                            }
                         }
                     };
                     _uiTimer.Start();
@@ -144,7 +201,7 @@ namespace MPlaylistApp
         {
             Microsoft.Win32.OpenFileDialog openFileDialog = new Microsoft.Win32.OpenFileDialog
             {
-                Filter = "Media Files|*.mp4;*.mov;*.mkv;*.wmv;*.wav",
+                Filter = "Media Files|*.mp4;*.mov;*.mkv;*.wmv;*.wav;*.png;*.jpg;*.jpeg",
                 Multiselect = true
             };
 
@@ -152,14 +209,18 @@ namespace MPlaylistApp
             {
                 foreach (string file in openFileDialog.FileNames)
                 {
+                    ulong detectedDuration = MediaMetadataProbe.GetDurationHNS(file);
                     var cue = new MediaCue
                     {
                         FilePath = file,
-                        Title = Path.GetFileNameWithoutExtension(file)
+                        Title = Path.GetFileNameWithoutExtension(file),
+                        DurationHNS = detectedDuration,
+                        OutPointHNS = detectedDuration // Default OutPoint to the physical end of the file
                     };
                     _playlist.Add(cue);
                     EngineInterop.LoadCueToEngine(cue);
                 }
+                UpdatePlaylistTotalDuration();
             }
         }
 
@@ -173,15 +234,31 @@ namespace MPlaylistApp
                     string ext = Path.GetExtension(file).ToLower();
                     if (ext == ".mp4" || ext == ".mov" || ext == ".mkv" || ext == ".wmv" || ext == ".wav")
                     {
+                        ulong detectedDuration = MediaMetadataProbe.GetDurationHNS(file);
                         var cue = new MediaCue
                         {
                             FilePath = file,
-                            Title = Path.GetFileNameWithoutExtension(file)
+                            Title = Path.GetFileNameWithoutExtension(file),
+                            DurationHNS = detectedDuration,
+                            OutPointHNS = detectedDuration // Default OutPoint to the physical end of the file
                         };
                         _playlist.Add(cue);
                         EngineInterop.LoadCueToEngine(cue);
                     }
                 }
+                UpdatePlaylistTotalDuration();
+            }
+        }
+
+        private void OnTestCleanFeedClicked(object sender, RoutedEventArgs e)
+        {
+            // Use the vestigial WinForms reference you already have to discover screens
+            var screens = System.Windows.Forms.Screen.AllScreens;
+            if (screens.Length > 1) {
+                // Target the secondary physical monitor (Index 1)
+                var target = screens[1].Bounds;
+                IntPtr targetHwnd = DisplayMatrix.SpawnBorderlessWindow(target.X, target.Y, target.Width, target.Height);
+                EngineInterop.mplaylist_bind_output_matrix(targetHwnd);
             }
         }
 
@@ -202,7 +279,7 @@ namespace MPlaylistApp
                 if (targetIndex < 0) return;
 
                 var nextCue = _playlist[targetIndex];
-                uint transMs = (uint)(nextCue.TransitionDuration * 1000);
+                uint transMs = nextCue.TransitionMs;
                 long inHnsecs = (long)nextCue.InPointHNS;
                 long outHnsecs = (long)nextCue.OutPointHNS;
 
@@ -280,6 +357,20 @@ namespace MPlaylistApp
             }
         }
 
+        private void TimelineSlider_PreviewMouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            _isUserScrubbing = true;
+        }
+
+        private void TimelineSlider_PreviewMouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (_conductor != null)
+            {
+                _conductor.RequestScrub((long)TimelineSlider.Value);
+            }
+            _isUserScrubbing = false;
+        }
+
         private void Timeline_DragStarted(object sender, System.Windows.Controls.Primitives.DragStartedEventArgs e)
         {
             _isUserScrubbing = true;
@@ -287,7 +378,10 @@ namespace MPlaylistApp
 
         private void Timeline_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e)
         {
-            EngineInterop.mplaylist_scrub_to((long)TimelineSlider.Value);
+            if (_conductor != null)
+            {
+                _conductor.RequestScrub((long)TimelineSlider.Value);
+            }
             _isUserScrubbing = false;
         }
 
@@ -327,32 +421,88 @@ namespace MPlaylistApp
 
         private void OnSetInPointClicked(object sender, RoutedEventArgs e)
         {
-            if (PlaylistUI.SelectedItem is MediaCue selectedCue)
+            if ((sender as System.Windows.Controls.Button)?.DataContext is MediaCue targetCue && _conductor != null)
             {
-                if (EngineInterop.mplaylist_get_diagnostics(out double audioTime, out double videoTime))
-                {
-                    selectedCue.InPointHNS = (ulong)(videoTime * 10000000.0);
-                }
+                targetCue.InPointHNS = (ulong)(_conductor.CurrentVideoTime * 10000000.0);
             }
         }
 
         private void OnSetOutPointClicked(object sender, RoutedEventArgs e)
         {
-            if (PlaylistUI.SelectedItem is MediaCue selectedCue)
+            if ((sender as System.Windows.Controls.Button)?.DataContext is MediaCue targetCue && _conductor != null)
             {
-                if (EngineInterop.mplaylist_get_diagnostics(out double audioTime, out double videoTime))
-                {
-                    selectedCue.OutPointHNS = (ulong)(videoTime * 10000000.0);
-                }
+                targetCue.OutPointHNS = (ulong)(_conductor.CurrentVideoTime * 10000000.0);
             }
         }
 
         private void OnVolumeSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
-            if (PlaylistUI.SelectedItem is MediaCue selectedCue && selectedCue == _activePlayingCue)
+            EngineInterop.mplaylist_set_volume_db((float)e.NewValue);
+        }
+
+        private IntPtr VideoHost_MessageHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            const int WM_LBUTTONDBLCLK = 0x0203;
+            if (msg == WM_LBUTTONDBLCLK)
             {
-                EngineInterop.mplaylist_set_volume_db((float)e.NewValue);
+                // Open the trim context menu at the mouse position
+                if (FindResource("VideoTrimMenu") is System.Windows.Controls.ContextMenu menu)
+                {
+                    menu.IsOpen = true;
+                }
+                handled = true;
+            }
+            return IntPtr.Zero;
+        }
+
+        private void ContextMenuSetIn_Click(object sender, RoutedEventArgs e)
+        {
+            if (_conductor != null && _activePlayingCue != null)
+            {
+                _activePlayingCue.InPointHNS = (ulong)(_conductor.CurrentVideoTime * 10000000.0);
+                PlaylistUI.SelectedItem = _activePlayingCue; // Force UI Selection Sync
             }
         }
+
+        private void ContextMenuSetOut_Click(object sender, RoutedEventArgs e)
+        {
+            if (_conductor != null && _activePlayingCue != null)
+            {
+                _activePlayingCue.OutPointHNS = (ulong)(_conductor.CurrentVideoTime * 10000000.0);
+                PlaylistUI.SelectedItem = _activePlayingCue; // Force UI Selection Sync
+            }
+        }
+
+        private void UpdatePlaylistTotalDuration()
+        {
+            ulong totalHns = 0;
+            foreach (var cue in _playlist) totalHns += cue.DurationHNS;
+            if (TotalDurationText != null) 
+            {
+                TimeSpan ts = TimeSpan.FromTicks((long)totalHns);
+                TotalDurationText.Text = $"TOTAL: {ts:hh\\:mm\\:ss}";
+            }
+        }
+
+        private void OverlayToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            if (OverlayToggle?.IsChecked == false)
+            {
+                try { EngineInterop.mplaylist_set_overlay_text(false, null); } catch { }
+            }
+        }
+    }
+
+    public class StringToBrushConverter : System.Windows.Data.IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
+        {
+            if (value is string colorStr && !string.IsNullOrEmpty(colorStr))
+            {
+                try { return new System.Windows.Media.BrushConverter().ConvertFromString(colorStr); } catch { }
+            }
+            return System.Windows.Media.Brushes.Transparent;
+        }
+        public object ConvertBack(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture) => null;
     }
 }

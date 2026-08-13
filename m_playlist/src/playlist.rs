@@ -16,6 +16,7 @@ pub struct Playlist {
     pub transition_duration_hnsecs: i64,
     pub ndi_enabled: bool,
     pub pending_fire: bool,
+    pub incoming_is_static: bool,
 }
 
 impl Playlist {
@@ -31,6 +32,7 @@ impl Playlist {
             transition_duration_hnsecs: 0,
             ndi_enabled: false,
             pending_fire: false,
+            incoming_is_static: false,
         }
     }
 
@@ -60,55 +62,95 @@ impl Playlist {
         self.cues[self.current_index].out_point_hnsecs = out_point_hnsecs;
 
         let cue = &self.cues[self.current_index];
-        let has_active_deck = self.deck_a.is_some() || self.deck_b.is_some();
+        let is_static = cue.is_static_image;
+
+        let has_active_deck = self.deck_a.is_some() || self.deck_b.is_some() || blend_factor.load(std::sync::atomic::Ordering::Acquire) != 0; // fallback just in case
         let transition_hnsecs = (transition_ms as i64) * 10_000;
         
+        self.pending_fire = true;
+        self.incoming_is_static = is_static;
+
         if transition_hnsecs > 0 && has_active_deck {
             self.transition_duration_hnsecs = transition_hnsecs;
-            self.pending_fire = true;
             
             if !self.is_deck_a_active {
                 println!("M-Playlist [LOGIC]: Preparing Deck A (Crossfade)...");
                 ring_a.flush();
-                graphics.clear_deck(0);
-                self.deck_a = Some(MediaEngine::new(0).unwrap());
-                if let Some(deck_a) = self.deck_a.as_mut() {
-                    deck_a.load_and_play(cue, ring_a.clone(), clock.clone(), graphics.clone(), blend_factor.clone()).unwrap();
-                    deck_a.is_paused.store(false, std::sync::atomic::Ordering::Release);
+                // graphics.clear_deck(0); - we don't clear, might have static image!
+                if is_static {
+                    self.deck_a = None;
+                    use std::os::windows::ffi::OsStrExt;
+                    let mut wpath: Vec<u16> = std::ffi::OsStr::new(&cue.filepath).encode_wide().collect();
+                    wpath.push(0);
+                    if let Ok(texture) = crate::wic::load_image_to_texture(&graphics.device, wpath.as_ptr()) {
+                        let _ = graphics.update_deck_static_texture(0, &texture);
+                    }
+                } else {
+                    self.deck_a = Some(MediaEngine::new(0).unwrap());
+                    if let Some(deck_a) = self.deck_a.as_mut() {
+                        deck_a.load_and_play(cue, ring_a.clone(), clock.clone(), graphics.clone(), blend_factor.clone()).unwrap();
+                        deck_a.is_paused.store(false, std::sync::atomic::Ordering::Release);
+                    }
                 }
             } else {
                 println!("M-Playlist [LOGIC]: Preparing Deck B (Crossfade)...");
                 ring_b.flush();
-                graphics.clear_deck(1);
-                self.deck_b = Some(MediaEngine::new(1).unwrap());
-                if let Some(deck_b) = self.deck_b.as_mut() {
-                    deck_b.load_and_play(cue, ring_b.clone(), clock.clone(), graphics.clone(), blend_factor.clone()).unwrap();
-                    deck_b.is_paused.store(false, std::sync::atomic::Ordering::Release);
+                if is_static {
+                    self.deck_b = None;
+                    use std::os::windows::ffi::OsStrExt;
+                    let mut wpath: Vec<u16> = std::ffi::OsStr::new(&cue.filepath).encode_wide().collect();
+                    wpath.push(0);
+                    if let Ok(texture) = crate::wic::load_image_to_texture(&graphics.device, wpath.as_ptr()) {
+                        let _ = graphics.update_deck_static_texture(1, &texture);
+                    }
+                } else {
+                    self.deck_b = Some(MediaEngine::new(1).unwrap());
+                    if let Some(deck_b) = self.deck_b.as_mut() {
+                        deck_b.load_and_play(cue, ring_b.clone(), clock.clone(), graphics.clone(), blend_factor.clone()).unwrap();
+                        deck_b.is_paused.store(false, std::sync::atomic::Ordering::Release);
+                    }
                 }
             }
         } else {
             self.transition_duration_hnsecs = 0;
-            self.pending_fire = true;
             
             if !self.is_deck_a_active {
                 println!("M-Playlist [LOGIC]: Preparing Deck A (Hard Cut)...");
                 ring_a.flush();
-                graphics.clear_deck(0);
                 
-                self.deck_a = Some(MediaEngine::new(0).unwrap());
-                if let Some(deck_a) = self.deck_a.as_mut() {
-                    deck_a.load_and_play(cue, ring_a.clone(), clock.clone(), graphics.clone(), blend_factor.clone()).unwrap();
-                    deck_a.is_paused.store(false, std::sync::atomic::Ordering::Release);
+                if is_static {
+                    self.deck_a = None;
+                    use std::os::windows::ffi::OsStrExt;
+                    let mut wpath: Vec<u16> = std::ffi::OsStr::new(&cue.filepath).encode_wide().collect();
+                    wpath.push(0);
+                    if let Ok(texture) = crate::wic::load_image_to_texture(&graphics.device, wpath.as_ptr()) {
+                        let _ = graphics.update_deck_static_texture(0, &texture);
+                    }
+                } else {
+                    self.deck_a = Some(MediaEngine::new(0).unwrap());
+                    if let Some(deck_a) = self.deck_a.as_mut() {
+                        deck_a.load_and_play(cue, ring_a.clone(), clock.clone(), graphics.clone(), blend_factor.clone()).unwrap();
+                        deck_a.is_paused.store(false, std::sync::atomic::Ordering::Release);
+                    }
                 }
             } else {
                 println!("M-Playlist [LOGIC]: Preparing Deck B (Hard Cut)...");
                 ring_b.flush();
-                graphics.clear_deck(1);
                 
-                self.deck_b = Some(MediaEngine::new(1).unwrap());
-                if let Some(deck_b) = self.deck_b.as_mut() {
-                    deck_b.load_and_play(cue, ring_b.clone(), clock.clone(), graphics.clone(), blend_factor.clone()).unwrap();
-                    deck_b.is_paused.store(false, std::sync::atomic::Ordering::Release);
+                if is_static {
+                    self.deck_b = None;
+                    use std::os::windows::ffi::OsStrExt;
+                    let mut wpath: Vec<u16> = std::ffi::OsStr::new(&cue.filepath).encode_wide().collect();
+                    wpath.push(0);
+                    if let Ok(texture) = crate::wic::load_image_to_texture(&graphics.device, wpath.as_ptr()) {
+                        let _ = graphics.update_deck_static_texture(1, &texture);
+                    }
+                } else {
+                    self.deck_b = Some(MediaEngine::new(1).unwrap());
+                    if let Some(deck_b) = self.deck_b.as_mut() {
+                        deck_b.load_and_play(cue, ring_b.clone(), clock.clone(), graphics.clone(), blend_factor.clone()).unwrap();
+                        deck_b.is_paused.store(false, std::sync::atomic::Ordering::Release);
+                    }
                 }
             }
         }
@@ -138,7 +180,9 @@ impl Playlist {
     pub fn tick(&mut self, clock: &MasterClock, blend_factor: &std::sync::atomic::AtomicU32, graphics: &Dx11Compositor, geometry: &[[f32; 4]; 4]) {
         
         if self.pending_fire {
-            let incoming_ready = if self.is_deck_a_active {
+            let incoming_ready = if self.incoming_is_static {
+                true
+            } else if self.is_deck_a_active {
                 self.deck_b.as_ref().map_or(false, |d| d.has_started.load(std::sync::atomic::Ordering::Acquire))
             } else {
                 self.deck_a.as_ref().map_or(false, |d| d.has_started.load(std::sync::atomic::Ordering::Acquire))
@@ -197,11 +241,9 @@ impl Playlist {
         }
         
         // UNCONDITIONALLY RENDER IF ACTIVE
-        if self.deck_a.is_some() || self.deck_b.is_some() {
-            let blend = f32::from_bits(blend_factor.load(std::sync::atomic::Ordering::Acquire));
-            if let Err(e) = graphics.render_composited(blend, geometry) {
-                eprintln!("M-Playlist [RENDER ERROR]: Failed to render composited: {:?}", e);
-            }
+        let blend = f32::from_bits(blend_factor.load(std::sync::atomic::Ordering::Acquire));
+        if let Err(e) = graphics.render_composited(blend, geometry) {
+            eprintln!("M-Playlist [RENDER ERROR]: Failed to render composited: {:?}", e);
         }
     }
     

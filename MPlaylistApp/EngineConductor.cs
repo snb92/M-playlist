@@ -33,6 +33,27 @@ namespace MPlaylistApp
         private MediaCue? _activeCue = null;
         private MediaCue? _nextCue = null;
         private bool _bDeckLoaded = false;
+        private bool _isTransitioning = false;
+        
+        private volatile bool _scrubRequested = false;
+        private long _scrubTargetHNS = 0;
+
+        public void RequestScrub(long targetHNS)
+        {
+            if (_activeCue != null && _activeCue.DurationHNS > 0)
+            {
+                // Clamp the scrub target to 500ms BEFORE the EOF to guarantee a video keyframe
+                long maxScrub = (long)_activeCue.DurationHNS - 5_000_000; 
+                if (maxScrub < 0) maxScrub = 0;
+                
+                _scrubTargetHNS = targetHNS > maxScrub ? maxScrub : targetHNS;
+            }
+            else
+            {
+                _scrubTargetHNS = targetHNS;
+            }
+            _scrubRequested = true;
+        }
 
         public Action<MediaCue>? OnCueActivated;
 
@@ -86,6 +107,19 @@ namespace MPlaylistApp
             {
                 Thread.Sleep(5); // ~200Hz tick
 
+                if (_scrubRequested)
+                {
+                    _scrubRequested = false;
+                    _isTransitioning = false; // Reset DDOS latch
+                    
+                    EngineInterop.mplaylist_scrub_to(_scrubTargetHNS);
+                    
+                    // THERMODYNAMIC WINDOW: Give the hardware engine 150ms to flush the VRAM swapchain 
+                    // and hunt for the next I-Frame before bombarding the COM interface with telemetry requests.
+                    System.Threading.Thread.Sleep(150); 
+                    continue;
+                }
+
                 if (EngineInterop.mplaylist_get_diagnostics(out double audioTime, out double videoTime))
                 {
                     CurrentAudioTime = audioTime;
@@ -95,48 +129,52 @@ namespace MPlaylistApp
                     {
                         ulong currentPlayheadHNS = (ulong)(CurrentVideoTime * 10000000.0);
 
-                        if (_activeCue.OutPointHNS > 0)
+                        // Modality 1: Static Image (Infinite Time)
+                        if (_activeCue.IsStaticImage || _activeCue.OutPointHNS == 0)
+                        {
+                            // We have infinite time, so pre-load the next cue immediately.
+                            if (!_bDeckLoaded)
+                            {
+                                ResolveNextCue();
+                                if (_nextCue != null)
+                                {
+                                    LoadPolymorphicCue(_nextCue);
+                                    _bDeckLoaded = true;
+                                }
+                            }
+                            // Note: The execution Guillotine is entirely bypassed. 
+                            // The static image holds perfectly in VRAM until the operator manually fires the next cue.
+                        }
+                        // Modality 2: Temporal Video (Ticking Time)
+                        else if (_activeCue.OutPointHNS > 0)
                         {
                             long timeRemaining = (long)_activeCue.OutPointHNS - (long)currentPlayheadHNS;
 
-                            // The Lookahead Math (B-Deck Pre-load): 5 seconds (50,000,000 HNS)
+                            // The Lookahead Math (B-Deck Pre-load): 5 seconds
                             if (timeRemaining <= 50_000_000 && timeRemaining > 0 && !_bDeckLoaded)
                             {
                                 ResolveNextCue();
                                 if (_nextCue != null)
                                 {
-                                    IntPtr ptr = Marshal.StringToCoTaskMemUTF8(_nextCue.FilePath);
-                                    try
-                                    {
-                                        var ffiCue = new FfiCue
-                                        {
-                                            FilePath = ptr,
-                                            InPointHnsecs = (long)_nextCue.InPointHNS,
-                                            OutPointHnsecs = (long)_nextCue.OutPointHNS,
-                                            IsLooping = (byte)(_nextCue.IsLooping ? 1 : 0),
-                                            HoldLastFrame = (byte)(_nextCue.HoldLastFrame ? 1 : 0),
-                                            TransitionDurationHnsecs = (long)(_nextCue.TransitionDuration * 10000000.0)
-                                        };
-                                        EngineInterop.mplaylist_load_cue(ffiCue);
-                                        _bDeckLoaded = true;
-                                    }
-                                    finally
-                                    {
-                                        Marshal.FreeCoTaskMem(ptr);
-                                    }
+                                    LoadPolymorphicCue(_nextCue);
+                                    _bDeckLoaded = true;
                                 }
                             }
+                            
+                            // The Execution Guillotine (50ms margin)
+                            ulong marginHNS = 500_000; 
+                            ulong triggerPoint = _activeCue.OutPointHNS > marginHNS ? _activeCue.OutPointHNS - marginHNS : _activeCue.OutPointHNS;
 
-                            // The Execution Guillotine
-                            if (currentPlayheadHNS >= _activeCue.OutPointHNS)
+                            if (currentPlayheadHNS >= triggerPoint && !_isTransitioning)
                             {
-                                switch (_activeCue.EndBehavior)
-                                {
+                                _isTransitioning = true;
+                                switch (_activeCue.EndBehavior) {
                                     case EndBehavior.Stop:
                                         EngineInterop.mplaylist_stop();
                                         _activeCue.IsActivePlaying = false;
                                         _activeCue = null;
                                         _bDeckLoaded = false;
+                                        _isTransitioning = false; // Release immediately
                                         break;
                                     case EndBehavior.LoopForever:
                                         EngineInterop.mplaylist_scrub_to((long)_activeCue.InPointHNS);
@@ -152,15 +190,52 @@ namespace MPlaylistApp
                                             FireNextCue();
                                         }
                                         break;
-                                    default:
                                     case EndBehavior.GotoTarget:
+                                        FireNextCue();
+                                        break;
+                                    default:
                                         FireNextCue();
                                         break;
                                 }
                             }
+
+                            // Latch Release (Hysteresis): Release when playhead mathematically drops well below the trigger point
+                            if (_isTransitioning && currentPlayheadHNS < triggerPoint - 10_000_000) 
+                            {
+                                _isTransitioning = false;
+                            }
                         }
                     }
                 }
+            }
+        }
+
+        private void LoadPolymorphicCue(MediaCue targetCue)
+        {
+            if (targetCue.IsStaticImage)
+            {
+                // 1. Static Modality: Route via pure WIC FFI (Rust auto-routes to standby deck)
+                EngineInterop.mplaylist_load_image(targetCue.FilePath); 
+            }
+            else
+            {
+                // 2. Temporal Modality: Route via WMF FFI
+                IntPtr ptr = Marshal.StringToCoTaskMemUTF8(targetCue.FilePath);
+                try
+                {
+                    var ffiCue = new FfiCue 
+                    { 
+                        FilePath = ptr,
+                        InPointHnsecs = (long)targetCue.InPointHNS,
+                        OutPointHnsecs = (long)targetCue.OutPointHNS,
+                        IsLooping = (byte)(targetCue.EndBehavior == EndBehavior.LoopForever ? 1 : 0),
+                        HoldLastFrame = 1,
+                        TransitionDurationHnsecs = targetCue.TransitionMs * 10000,
+                        IsStaticImage = (byte)(targetCue.IsStaticImage ? 1 : 0)
+                    };
+                    EngineInterop.mplaylist_load_cue(ffiCue); 
+                }
+                finally { Marshal.FreeCoTaskMem(ptr); }
             }
         }
 
@@ -201,7 +276,7 @@ namespace MPlaylistApp
                 {
                     int targetIndex = _playlistOrder.IndexOf(_nextCue);
                     
-                    uint transMs = (uint)(_nextCue.TransitionDuration * 1000);
+                    uint transMs = _nextCue.TransitionMs; // <--- NO MORE HARD CUTS
                     long inHnsecs = (long)_nextCue.InPointHNS;
                     long outHnsecs = (long)_nextCue.OutPointHNS;
 
@@ -216,6 +291,7 @@ namespace MPlaylistApp
                     _activeCue = _nextCue;
                     _bDeckLoaded = false;
                     _nextCue = null;
+                    _isTransitioning = false;
                 }
             }
             else

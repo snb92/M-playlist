@@ -23,6 +23,8 @@ namespace MPlaylistApp
         private EndBehavior _endBehavior = EndBehavior.Stop;
         private ulong _inPointHNS;
         private ulong _outPointHNS;
+        private ulong _durationHNS;
+        private uint _transitionMs = 1000; // Default 1 second crossfade
         private double _volumeDb = 0.0;
         private bool _isActivePlaying = false;
         
@@ -44,9 +46,21 @@ namespace MPlaylistApp
         public string Notes { get => _notes; set { _notes = value; OnPropertyChanged(); } }
         public EndBehavior EndBehavior { get => _endBehavior; set { _endBehavior = value; OnPropertyChanged(); } }
         public ulong InPointHNS { get => _inPointHNS; set { _inPointHNS = value; OnPropertyChanged(); } }
-        public ulong OutPointHNS { get => _outPointHNS; set { _outPointHNS = value; OnPropertyChanged(); } }
+        public ulong OutPointHNS { get => IsStaticImage ? 0 : _outPointHNS; set { _outPointHNS = value; OnPropertyChanged(); } }
+        public ulong DurationHNS { get => IsStaticImage ? 0 : _durationHNS; set { _durationHNS = value; OnPropertyChanged(); } }
+        public uint TransitionMs { get => _transitionMs; set { _transitionMs = value; OnPropertyChanged(); } }
         public double VolumeDb { get => _volumeDb; set { _volumeDb = value; OnPropertyChanged(); } }
         public bool IsActivePlaying { get => _isActivePlaying; set { _isActivePlaying = value; OnPropertyChanged(); } }
+
+        public bool IsStaticImage 
+        {
+            get 
+            {
+                if (string.IsNullOrEmpty(_filePath)) return false;
+                string ext = System.IO.Path.GetExtension(_filePath).ToLowerInvariant();
+                return ext == ".png" || ext == ".jpg" || ext == ".jpeg";
+            }
+        }
 
         // FFI mapping compatibility properties
         public long TransitionDurationHnsecs { get => _transitionDurationHnsecs; set { _transitionDurationHnsecs = value; OnPropertyChanged(); } }

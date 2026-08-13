@@ -52,3 +52,14 @@
 - [x] NDI Broadcast Output
   - [ ] Implement format-conversion compute shader before readback (10-bit R10G10B10A2 -> 8-bit BGRA)
   - [x] Phase 6 Path B: Direct2D Typography & Immutable 1080p Swapchain
+  - [x] Phase 7.1: The Guillotine Latch
+  - [x] Phase 7.2: The Temporal Vacuum
+  - [x] Phase 7.3: Interactive Topology & Thread Safety
+  - [x] Phase 7.4: Operator Topology & Bounds Geometry
+  - [x] Phase 7.5: Visual Fidelity & Scrub Mechanics
+  - [x] Phase 10: Spatial Geometry & GPU Color (Zero-Blocking VRAM Streaming)
+
+  - [x] Phase 11: The Static Asset Pipeline (WIC to DX11 Integration)
+
+  - [x] Phase 11b: Static Asset Polymorphism & C# Routing
+  - [x] Phase 11c: The Pure State Realignment (C-ABI Modality Enforcement)

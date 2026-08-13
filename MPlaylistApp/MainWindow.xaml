@@ -9,6 +9,11 @@
     
     <Window.Resources>
         <local:TimecodeConverter x:Key="TimecodeConverter"/>
+        <local:StringToBrushConverter x:Key="StringToBrushConverter"/>
+        <ContextMenu x:Key="VideoTrimMenu" Background="#222" Foreground="White">
+            <MenuItem Header="Set IN Point (Current Time)" Click="ContextMenuSetIn_Click"/>
+            <MenuItem Header="Set OUT Point (Current Time)" Click="ContextMenuSetOut_Click"/>
+        </ContextMenu>
     </Window.Resources>
 
     <Grid>
@@ -98,7 +103,10 @@
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
-                <TextBlock Grid.Row="0" Text="PLAYLIST" FontWeight="Bold" Foreground="#888" Margin="0,0,0,5"/>
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,5">
+                    <TextBlock Text="PLAYLIST" FontWeight="Bold" Foreground="#888" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="TotalDurationText" Text="TOTAL: 00:00:00.00" Foreground="White" FontWeight="Bold" Margin="10,0,0,0"/>
+                </StackPanel>
                 
                 <ListView Grid.Row="1" Background="#222222" BorderBrush="#444" Foreground="White" x:Name="PlaylistUI" AllowDrop="True" Drop="PlaylistUI_Drop" Margin="0,0,0,10">
                     <ListView.ItemContainerStyle>
@@ -114,15 +122,22 @@
                     </ListView.ItemContainerStyle>
                     <ListView.ItemTemplate>
                         <DataTemplate>
-                            <Border BorderBrush="{Binding ColorTag}" BorderThickness="4,0,0,0" Padding="5">
+                            <Border BorderBrush="{Binding ColorTag, Converter={StaticResource StringToBrushConverter}}" BorderThickness="4,0,0,0" Padding="5">
                                 <StackPanel Orientation="Vertical">
                                     <TextBlock Text="{Binding Title}" FontWeight="Bold"/>
+                                    <!-- Crossfade Control -->
                                     <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
-                                        <TextBlock Text="Dur: " Foreground="Gray" VerticalAlignment="Center"/>
-                                        <!-- Bound with TimecodeConverter -->
-                                        <TextBlock Text="{Binding TransitionDuration, Converter={StaticResource TimecodeConverter}}" Foreground="LightGray" VerticalAlignment="Center" Margin="0,0,15,0"/>
-                                        <TextBlock Text="In: " Foreground="Gray" VerticalAlignment="Center"/>
-                                        <TextBlock Text="{Binding InPointHNS, Converter={StaticResource TimecodeConverter}}" Foreground="LightGray" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                        <TextBlock Text="Crossfade (ms): " Foreground="#888" VerticalAlignment="Center"/>
+                                        <TextBox Text="{Binding TransitionMs, UpdateSourceTrigger=PropertyChanged}" Width="50" Background="#333" Foreground="White"/>
+                                    </StackPanel>
+
+                                    <StackPanel Orientation="Horizontal" Margin="0,2,0,5">
+                                        <TextBlock Text="Dur: " Foreground="#888" FontSize="11"/>
+                                        <TextBlock Text="{Binding DurationHNS, Converter={StaticResource TimecodeConverter}}" Foreground="#AAA" FontSize="11" Margin="0,0,10,0"/>
+                                        <TextBlock Text="In: " Foreground="#888" FontSize="11"/>
+                                        <TextBlock Text="{Binding InPointHNS, Converter={StaticResource TimecodeConverter}}" Foreground="#AAA" FontSize="11" Margin="0,0,10,0"/>
+                                        <TextBlock Text="Out: " Foreground="#888" FontSize="11"/>
+                                        <TextBlock Text="{Binding OutPointHNS, Converter={StaticResource TimecodeConverter}}" Foreground="#AAA" FontSize="11"/>
                                     </StackPanel>
                                 </StackPanel>
                             </Border>
@@ -148,22 +163,104 @@
                     <!-- VideoHwndHost injected here -->
                 </Border>
 
-                <Slider Grid.Row="2" x:Name="TimelineSlider" Maximum="300000000" Margin="0,10,0,10" primitives:Thumb.DragStarted="Timeline_DragStarted" primitives:Thumb.DragCompleted="Timeline_DragCompleted"/>
+                <Slider Grid.Row="2" x:Name="TimelineSlider" Margin="0,10,0,10" 
+                        IsMoveToPointEnabled="True"
+                        PreviewMouseLeftButtonDown="TimelineSlider_PreviewMouseLeftButtonDown" 
+                        PreviewMouseLeftButtonUp="TimelineSlider_PreviewMouseLeftButtonUp"
+                        primitives:Thumb.DragStarted="Timeline_DragStarted" 
+                        primitives:Thumb.DragCompleted="Timeline_DragCompleted"/>
 
-                <!-- Transport Controls -->
-                <Grid Grid.Row="3" Margin="0,5,0,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    
-                    <Button Grid.Column="1" Click="OnStopClicked" Content="■ STOP" Background="#8B0000" Foreground="White" FontWeight="Bold" Height="45" Width="100" Margin="0,0,10,0"/>
-                    <Button Grid.Column="2" Click="OnPauseClicked" Content="⏸ PAUSE" Background="#333" Foreground="White" FontWeight="Bold" Height="45" Width="100" Margin="0,0,10,0"/>
-                    <Button Grid.Column="3" Click="OnPlayClicked" Content="▶ PLAY / FIRE NEXT" Background="#1E90FF" Foreground="White" FontWeight="Bold" Height="45" Width="180"/>
-                </Grid>
+                <StackPanel Grid.Row="3" Margin="0,15,0,5">
+                    <!-- 🎛️ THE BROADCAST AUDIO DASHBOARD -->
+                    <Border Background="#111" BorderBrush="#333" BorderThickness="1" Padding="15,10" Margin="0,0,0,15">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Master Fader -->
+                            <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="0,0,20,0">
+                                <TextBlock Text="MASTER" Foreground="#AAA" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                <Slider x:Name="MasterVolumeSlider" Minimum="-60" Maximum="6" Value="0" Width="100" VerticalAlignment="Center" ValueChanged="OnVolumeSliderChanged" Style="{x:Null}"/>
+                                <TextBlock Text="{Binding Value, ElementName=MasterVolumeSlider, StringFormat={}{0:F1} dB}" Foreground="#00FFCC" FontFamily="Consolas" VerticalAlignment="Center" Margin="10,0,0,0" Width="50" FontWeight="Bold"/>
+                            </StackPanel>
+
+                            <!-- Horizontal VU Meters -->
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <Grid Margin="0,0,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="L" Foreground="#888" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0" Width="12"/>
+                                    <Border Grid.Column="1" Background="#050505" BorderBrush="#222" BorderThickness="1" Height="14" CornerRadius="2">
+                                        <Rectangle HorizontalAlignment="Stretch" RenderTransformOrigin="0,0.5">
+                                            <Rectangle.Fill>
+                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                                    <GradientStop Color="#00FF00" Offset="0.0" />
+                                                    <GradientStop Color="#00FF00" Offset="0.75" />
+                                                    <GradientStop Color="#FFFF00" Offset="0.85" />
+                                                    <GradientStop Color="#FF0000" Offset="0.95" />
+                                                </LinearGradientBrush>
+                                            </Rectangle.Fill>
+                                            <Rectangle.RenderTransform>
+                                                <ScaleTransform x:Name="MeterLeftScale" ScaleX="0" />
+                                            </Rectangle.RenderTransform>
+                                        </Rectangle>
+                                    </Border>
+                                </Grid>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="R" Foreground="#888" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0" Width="12"/>
+                                    <Border Grid.Column="1" Background="#050505" BorderBrush="#222" BorderThickness="1" Height="14" CornerRadius="2">
+                                        <Rectangle HorizontalAlignment="Stretch" RenderTransformOrigin="0,0.5">
+                                            <Rectangle.Fill>
+                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                                    <GradientStop Color="#00FF00" Offset="0.0" />
+                                                    <GradientStop Color="#00FF00" Offset="0.75" />
+                                                    <GradientStop Color="#FFFF00" Offset="0.85" />
+                                                    <GradientStop Color="#FF0000" Offset="0.95" />
+                                                </LinearGradientBrush>
+                                            </Rectangle.Fill>
+                                            <Rectangle.RenderTransform>
+                                                <ScaleTransform x:Name="MeterRightScale" ScaleX="0" />
+                                            </Rectangle.RenderTransform>
+                                        </Rectangle>
+                                    </Border>
+                                </Grid>
+                            </StackPanel>
+
+                            <!-- Raw Numeric Probes -->
+                            <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="20,0,0,0">
+                                <TextBlock x:Name="VuTextL" Text="L: -INF" Foreground="#00FF00" FontFamily="Consolas" FontWeight="Bold" Margin="0,0,0,2"/>
+                                <TextBlock x:Name="VuTextR" Text="R: -INF" Foreground="#00FF00" FontFamily="Consolas" FontWeight="Bold"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <!-- TRANSPORT CONTROLS -->
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        
+                        <Button Grid.Column="1" Click="OnTestCleanFeedClicked" Content="TEST CLEAN FEED" Background="#444" Foreground="White" FontWeight="Bold" Height="45" Width="130" Margin="0,0,10,0"/>
+                        <Button Grid.Column="2" Click="OnStopClicked" Content="■ STOP" Background="#8B0000" Foreground="White" FontWeight="Bold" Height="45" Width="100" Margin="0,0,10,0"/>
+                        <Button Grid.Column="3" Click="OnPauseClicked" Content="⏸ PAUSE" Background="#333" Foreground="White" FontWeight="Bold" Height="45" Width="100" Margin="0,0,10,0"/>
+                        <Button Grid.Column="4" Click="OnPlayClicked" Content="▶ PLAY / FIRE NEXT" Background="#1E90FF" Foreground="White" FontWeight="Bold" Height="45" Width="180"/>
+                    </Grid>
+                </StackPanel>
                 
                 <TextBlock x:Name="StatusText" FontFamily="Consolas" Foreground="#888" HorizontalAlignment="Center" Margin="0,10,0,0"/>
             </Grid>
@@ -183,12 +280,15 @@
                     <ComboBox SelectedItem="{Binding EndBehavior, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="Black" Margin="0,0,0,10" x:Name="ComboEndBehavior"/>
                     
                     <TextBlock Text="Color Tag" Foreground="#888" Margin="0,0,0,2"/>
-                    <ComboBox SelectedItem="{Binding ColorTag, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="Black" Margin="0,0,0,10">
+                    <ComboBox SelectedValue="{Binding ColorTag, UpdateSourceTrigger=PropertyChanged}" SelectedValuePath="Content" Background="#333" Foreground="Black" Margin="0,0,0,10">
                         <ComboBoxItem Content="#444444" />
                         <ComboBoxItem Content="#FF0000" />
                         <ComboBoxItem Content="#00FF00" />
                         <ComboBoxItem Content="#0000FF" />
                     </ComboBox>
+
+                    <TextBlock Text="Hardware Video Overlay" Foreground="#888" Margin="0,15,0,2"/>
+                    <CheckBox x:Name="OverlayToggle" Content="SHOW TIMECODE OVERLAY" Foreground="White" FontWeight="Bold" Margin="0,0,0,10" Checked="OverlayToggle_Changed" Unchecked="OverlayToggle_Changed"/>
                     
                     <TextBlock Text="Trim Points" Foreground="#888" Margin="0,0,0,2"/>
                     <Grid Margin="0,0,0,10">

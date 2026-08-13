@@ -23,6 +23,7 @@ pub struct FfiCue {
     pub is_looping: u8,            // u8 used to prevent C# bool ABI alignment issues
     pub hold_last_frame: u8,
     pub transition_duration_hnsecs: i64,
+    pub is_static_image: u8,
 }
 
 struct EngineState {
@@ -158,6 +159,7 @@ pub extern "C" fn mplaylist_load_cue(cue: FfiCue) -> bool {
         is_looping: cue.is_looping != 0,
         hold_last_frame: cue.hold_last_frame != 0,
         transition_duration_hnsecs: cue.transition_duration_hnsecs,
+        is_static_image: cue.is_static_image != 0,
     };
 
     let state = get_state().lock().unwrap();
@@ -331,11 +333,9 @@ pub extern "C" fn mplaylist_set_ndi_enabled(enabled: bool) {
 }
 
 #[no_mangle]
-pub extern "C" fn mplaylist_resize_swapchain(width: u32, height: u32) {
-    let state = get_state().lock().unwrap();
-    if let Some(logic) = state.app_logic.as_ref() {
-        let _ = logic.tx.send(EngineCommand::Resize(width, height));
-    }
+pub extern "C" fn mplaylist_resize_swapchain(_width: u32, _height: u32) {
+    // LOBOTOMIZED: The engine is now locked to a 1920x1080 internal broadcast standard.
+    // DXGI hardware scaling (DXGI_SCALING_STRETCH) will automatically fit it to the C# UI window.
 }
 
 #[no_mangle]
@@ -371,4 +371,79 @@ pub extern "C" fn mplaylist_set_audio_route(deck_id: i32, in_ch: i32, out_bus: i
     if let Some(logic) = state.app_logic.as_ref() {
         let _ = logic.tx.send(EngineCommand::SetAudioRoute { deck_id, in_ch, out_bus, gain_db });
     }
+}
+
+#[no_mangle]
+pub extern "C" fn mplaylist_set_spatial_color(
+    crop_left: f32, crop_top: f32, crop_right: f32, crop_bottom: f32,
+    pan_x: f32, pan_y: f32, zoom: f32,
+    brightness: f32, contrast: f32, saturation: f32
+) {
+    if let Ok(mut state) = crate::graphics::SPATIAL_COLOR_STATE.write() {
+        state.crop_left = crop_left;
+        state.crop_top = crop_top;
+        state.crop_right = crop_right;
+        state.crop_bottom = crop_bottom;
+        state.pan_x = pan_x;
+        state.pan_y = pan_y;
+        state.zoom = zoom;
+        state.brightness = brightness;
+        state.contrast = contrast;
+        state.saturation = saturation;
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn mplaylist_bind_output_matrix(hwnd: *mut std::ffi::c_void) -> bool {
+    let state = get_state().lock().unwrap();
+    if let Some(graphics) = state.graphics.as_ref() {
+        unsafe {
+            use windows::Win32::Graphics::Dxgi::*;
+            use windows::Win32::Foundation::HWND;
+            use windows::core::ComInterface;
+            
+            let device = &graphics.device;
+            let dxgi_device: windows::core::Result<IDXGIDevice> = device.cast();
+            if dxgi_device.is_err() { return false; }
+            let dxgi_device = dxgi_device.unwrap();
+            
+            let dxgi_adapter: windows::core::Result<IDXGIAdapter> = dxgi_device.GetAdapter();
+            if dxgi_adapter.is_err() { return false; }
+            let dxgi_adapter = dxgi_adapter.unwrap();
+            
+            let dxgi_factory: windows::core::Result<IDXGIFactory2> = dxgi_adapter.GetParent();
+            if dxgi_factory.is_err() { return false; }
+            let dxgi_factory = dxgi_factory.unwrap();
+
+            let swapchain_desc = DXGI_SWAP_CHAIN_DESC1 {
+                Width: 1920, 
+                Height: 1080,
+                Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
+                Stereo: false.into(),
+                SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
+                BufferCount: 2,
+                Scaling: DXGI_SCALING_STRETCH,
+                SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
+                AlphaMode: windows::Win32::Graphics::Dxgi::Common::DXGI_ALPHA_MODE_IGNORE, 
+                Flags: 0,
+            };
+
+            let swapchain = dxgi_factory.CreateSwapChainForHwnd(
+                device, 
+                HWND(hwnd as _), 
+                &swapchain_desc, 
+                None, 
+                None
+            );
+            
+            if let Ok(swapchain) = swapchain {
+                if let Ok(mut lock) = graphics.output_swapchain.lock() {
+                    *lock = Some(swapchain);
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }

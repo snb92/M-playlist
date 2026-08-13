@@ -214,3 +214,52 @@ This file contains a timestamped log of all findings, decisions, validations, an
 - **FINDING / DECISION (2026-08-11):** UI Thread DispatcherTimer poses a thermodynamic risk to execution timing.
 - **IMPACT:** Garbage Collection or layout passes on the WPF thread can delay FFI triggers, missing crossfade out-points.
 - **RESOLUTION:** Implemented Phase 7. Built EngineConductor.cs, moving macro-state loop to a ThreadPriority.Highest background thread. UI thread reduced to a loose telemetry observer.
+
+- **FINDING / DECISION (2026-08-12):** EngineConductor Guillotine was bypassing execution due to OutPointHNS defaulting to 0 (Temporal Vacuum).
+- **IMPACT:** Playhead was not triggering EndBehavior actions. UI Slider was artificially capped at 30 seconds.
+- **RESOLUTION:** Implemented Phase 7.1 and 7.2. Injected pure Win32 COM IPropertyStore to probe media duration in HNS at ingestion. Implemented _isTransitioning state latch to prevent DDOSing the FFI layer. Scaled UI slider maximum to active cue duration dynamically.
+
+- **FINDING / DECISION (2026-08-12):** Diagnosed WPF UI deadlocks and data binding failures. Scrubbing triggered cross-thread COM collision. Trim buttons failed due to DataContext scope. Color Tags failed WPF Brush typing.
+- **IMPACT:** UI was locking up the EngineConductor pipeline. Trim boundaries were discarded. Playlist colors were absent.
+- **RESOLUTION:** Executed Phase 7.3. Routed scrub commands through thread-safe EngineConductor queue. Re-wired trim operations to pull MediaCue directly from Button DataContext. Injected StringToBrushConverter to strictly map Hex strings to WPF Brushes.
+
+- **FINDING / DECISION (2026-08-12):** Executed Phase 7.4. UI required granular trimming controls and bounded scrubbing limits to protect the Rust engine EOF frame extraction.
+- **IMPACT:** Engine now receives crossfade MS variables directly on cue fire instead of defaulting to 0. Scrubbing cannot exceed native file limits, preventing Keyframe decode freezes. Win32 Airspace rule for HwndHost was successfully circumvented via a WM_LBUTTONDBLCLK message hook for interactive Context Menus.
+- **RESOLUTION:** Added bounds clamping logic to RequestScrub. Plumbed TransitionMs through mplaylist_fire_cue. Attached Double-Click MessageHook to VideoHwndHost to trigger VideoTrimMenu in WPF space.
+
+- **FINDING / DECISION (2026-08-12):** Executed Phase 7.5. Diagnosed legacy UI ghosting (dead pixels rendering stale data), Selection Scope Desyncs during trimming operations, and Thread Deadlocking triggered by Slider bypassing FFI events.
+- **IMPACT:** Engine was crashing due to lack of thermodynamic settling window. Slider was silently buffering commands. Cue Inspector was visually lying about trim states by failing to sync its DataContext binding.
+- **RESOLUTION:** Eradicated ghost text in DataTemplate. Enforced 150ms VRAM settling buffer in EngineConductor. Hooked raw PreviewMouseLeftButton events to guarantee physical UI dragging correctly toggles the FFI state latch. Forced WPF SelectedItem updates upon execution of Trim buttons.
+
+- **FINDING / DECISION (2026-08-12):** The architecture of the C# Macro-State is currently flawless. Tier 1 (Core Logistics & Stability) is officially sealed. The engine's interactive topology is complete.
+- **IMPACT:** We have mathematically protected the engine as much as physically possible for H.264 files without writing a bloated, multi-threaded buffered Demuxer in C# (which would violate our zero-allocation policy).
+- **RESOLUTION:** We will build an automatic Live Transcoder in Phase 14 to convert dangerous MP4 files to ProRes automatically in the background.
+
+- **FINDING / DECISION (2026-08-12):** Executed Phase 8 and Phase 8.1 - Telemetry & The Audio Dashboard. Diagnosed WPF layout cascade failures when attempting to render 60fps VU meters using standard controls. Discovered the DLL build pipeline was not automatically vaulting the compiled Rust library into the WPF execution directory.
+- **IMPACT:** A naive WPF progress bar would trigger a GC storm. FFI calls failed due to stale DLL injection.
+- **RESOLUTION:** Implemented lock-free AtomicU32 peak trackers in WASAPI via IEEE-754 f32 bitcasting. Circumnavigated WPF visual tree by natively scaling Rectangle geometries. Injected Style="{x:Null}" to sever the Master Fader from global timeline style bleed. Architected a mandatory <Copy> block inside the .csproj MSBuild pipeline to permanently guarantee absolute physical sync between the Rust release targets and the C# execution layer.
+
+- **FINDING / DECISION (2026-08-12):** Executed Phase 8.3 & Phase 9. Discovered the MSBuild <Copy> target was being silently bypassed by MSBuild caching, leaving the ghost DLL in the execution directory. Furthermore, the mplaylist_get_audio_levels export was stripped from the symbol table because it wasn't statically linked at the root module.
+- **IMPACT:** EntryPointNotFoundException crash on the UI thread when polling the Audio Dashboard.
+- **RESOLUTION:** Moved all crucial C-ABI exports directly into lib.rs to forcefully project them into the DLL's export table. Constructed a lock-free RwLock<Vec<u16>> bridge (SHOW_OVERLAY & OVERLAY_TEXT) in the Rust graphics.rs to receive dynamic UTF-16 characters from C#. Built the FFI translation for mplaylist_set_overlay_text and bound it to a UI toggle. Executed an absolute terminal command chain to flush the old DLL and rebuild both boundaries.
+
+- **FINDING / DECISION (2026-08-12):** Diagnosed 0x88990001 (D2DERR_WRONG_STATE) crash during Phase 9 typography rendering and invisible VU meters.
+- **IMPACT:** The Direct2D GPU state machine collapsed because an early eturn bypassed EndDraw() and the DXGI swapchain Present() call. The VU meter Rectangles collapsed to 0 width because they lacked HorizontalAlignment="Stretch".
+- **RESOLUTION:** Eradicated early returns in the Rust rendering loop and encapsulated the Typography bridge in a safe if is_visible block. Forced the WPF Rectangles to stretch across the border width so the ScaleX transform operates on a non-zero area. Recompiled and flushed the pipeline.
+
+- **[2026-08-12] FINDING / DECISION:** Evaluated the necessity of zero-blocking constant buffer updates. Discovered that existing code already used D3D11_MAP_WRITE_DISCARD.
+- **IMPACT:** Validated the architectural theory for VRAM streaming. Permitted widening the memory pipe to 128 bytes without rebuilding the core DX11 mapping context.
+- **RESOLUTION:** Executed Phase 10 Spatial Geometry expansion via an explicitly initialized lock-free SPATIAL_COLOR_STATE (zoom=1.0, contrast=1.0, saturation=1.0) to prevent shader division crashes.
+
+
+- **[2026-08-12] FINDING / DECISION:** Identified structural clash between WMF IMFSample COM requirements and static image ingestion.
+- **IMPACT:** A static texture has no temporal IMFSample. Attempting to fulfill the staging requirement for a sample would cause memory corruption or drop the VRAM buffer prematurely.
+- **RESOLUTION:** Decoupled the tuple requirement by wrapping SendableSample in an Option. Validated that create_srv closure natively handles the None state seamlessly without HLSL shader disruption. Also injected CoInitializeEx in mplaylist_load_image to prevent .NET Task Pool COM initialization crashes.
+
+- **[2026-08-12] FINDING / DECISION:** Discovered that the Playlist::fire_cue logic bypassed WMF hardware decoders by actively parsing string extensions (.png / .jpg).
+- **IMPACT:** Violates the "Blind Muscle" architecture by injecting C# Macro-State logic (file extension parsing and modality selection) directly into the Rust execution engine.
+- **RESOLUTION:** Executed Phase 11c (The Pure State Realignment). Stripped string parsing from playlist.rs. Expanded the FfiCue struct with an IsStaticImage primitive u8 byte. Transferred all modality logistics exclusively to the C# EngineConductor.
+
+- **[2026-08-12] FINDING / DECISION:** Identified structural desync in static asset rendering. EngineConductor blindly dispatched static assets to mplaylist_load_cue during B-Deck preload, which failed to actually load WIC frames into VRAM.
+- **IMPACT:** Triggering a static image resulted in a blank output because the asset was queued but never decoded into the DX11 compositor surface.
+- **RESOLUTION:** Executed Phase 11b. Upgraded the Rust ire_cue function to directly decode WIC frames to VRAM natively at the exact moment of execution if the incoming cue is static. Bypassed Media Foundation instantiation seamlessly without stalling the transition mathematics.

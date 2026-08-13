@@ -15,6 +15,7 @@ pub struct EngineCue {
     pub is_looping: bool,
     pub hold_last_frame: bool,
     pub transition_duration_hnsecs: i64,
+    pub is_static_image: bool,
 }
 
 pub enum EngineCommand {
@@ -49,6 +50,12 @@ impl AppLogic {
         let (tx, rx): (Sender<EngineCommand>, Receiver<EngineCommand>) = channel();
         
         let thread = thread::spawn(move || {
+            unsafe {
+                let _ = windows::Win32::System::Com::CoInitializeEx(
+                    None,
+                    windows::Win32::System::Com::COINIT_MULTITHREADED,
+                );
+            }
             let mut playlist = Playlist::new();
             println!("M-Playlist [LOGIC]: App Logic Loop Started.");
 

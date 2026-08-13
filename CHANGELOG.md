@@ -126,3 +126,52 @@
 - Implemented deterministic O(1) Cue routing via ConcurrentDictionary.
 - Implemented 5-second Lookahead Math for B-Deck pre-loading.
 - Stripped DispatcherTimer of execution authority, converting it to a loose 33ms telemetry observer.
+- Consolidated Phase 7.1 and 7.2: Implemented pure C# Win32 COM metadata probing (MediaMetadataProbe.cs) for instantaneous HNS duration lookup. 
+- Decoupled EngineConductor Guillotine Physics from temporal vacuum by injecting a 50ms safety margin and thermodynamic state latch.
+- Wired UI output and trim buttons to strictly read from the Conductor's telemetry cache.
+- Implemented Phase 7.3: Interactive Topology & Thread Safety.
+- Eliminated cross-thread COM scrubbing collisions by implementing a volatile command queue in EngineConductor.
+- Repaired WPF Trim buttons by extracting MediaCue from the visual tree DataContext instead of SelectedItem.
+- Built a native WPF StringToBrushConverter for rendering Hex Color Tags dynamically without model corruption.
+- Implemented Phase 7.4: Operator Topology & Bounds Geometry.
+- Enforced EOF Scrub Clamping in EngineConductor to prevent Media Foundation decoding freezes at the tail-end of a video stream.
+- Re-activated Crossfade physics by dynamically passing TransitionMs across the FFI to the Rust compositor.
+- Implemented raw Win32 MessageHook on HwndHost to intercept double-clicks and invoke a native WPF Context Menu over the video airspace for instantaneous IN/OUT trimming.
+- Rendered exact DurationHNS and Crossfade controls on the playlist UI cards alongside a dynamic Playlist Total Duration calculation.
+- Implemented Phase 7.5: Visual Fidelity & Scrub Mechanics.
+- Injected a strict 150ms thermodynamic settling window in the EngineConductor scrub routing loop, granting Media Foundation time to safely dump its VRAM swapchain before bombarding it with polling telemetry.
+- Bypassed WPF Slider event spoofing by wiring raw PreviewMouseLeftButtonDown and Up events to guarantee accurate playhead latching.
+- Fixed the Trim Context Menu's Selection Scope Desync by forcing PlaylistUI.SelectedItem to actively sync to the cue being manipulated in memory.
+- Eradicated legacy ghost text from the XAML DataTemplate, merging IN/OUT boundaries and true durations into a single dynamic stack.
+- Implemented Phase 8 (Telemetry & Audio Dashboard) and Phase 8.1 (Dashboard Fidelity).
+- Added lock-free WASAPI peak tracking via AtomicU32 in the Rust engine.
+- Rendered Zero-Allocation WPF VU meters using direct ScaleTransform property mapping in C# _uiTimer, bypassing catastrophic layout engine passes.
+- Severed WPF Global Style inheritance from the Master Volume Slider.
+- Automated the physical deployment of m_playlist.dll directly into the MSBuild pipeline via .csproj Post-Build targets, permanently ending silent FFI execution drift.
+- Implemented Phase 8.3 & Phase 9.
+- Purged MSBuild cache and executed absolute PowerShell flush to deploy the new Rust FFI endpoints.
+- Migrated FFI endpoints to lib.rs to enforce rigid symbol compilation.
+- Constructed a lock-free RwLock<Vec<u16>> String Bridge across the FFI to drive Direct2D Typography over the GPU swapchain.
+- Implemented mathematical Elapsed/Remaining C# Timecode and mounted it to the VRAM Typography Bridge via the _uiTimer.Tick.
+
+## [Phase 10: Spatial Geometry & GPU Color] - 2026-08-12
+### Added
+- Expanded DX11 BlendData struct to a 128-byte mathematical payload for zero-blocking memory alignment.
+- Overhauled PS_CODE in graphics.rs to process hardware-accelerated pan, zoom, crop limits, and color correction natively on the GPU at 60fps.
+- Configured VRAM Streaming by migrating constant buffer updates strictly to D3D11_MAP_WRITE_DISCARD Map/Unmap commands.
+- Established a new zero-allocation FFI hook mplaylist_set_spatial_color in C# to asynchronously modify the global RwLock<SpatialColorState>.
+
+
+## [Phase 11: The Static Asset Pipeline] - 2026-08-12
+### Added
+- Architected a pure Win32/COM zero-copy ingestion route for static assets (.PNG/.JPG) using Windows Imaging Component (WIC) via wic.rs.
+- Implemented load_image_to_texture to forcibly format-convert decoded frames into PBGRA and blast them directly into a D3D11_USAGE_IMMUTABLE VRAM texture.
+- Decoupled the A/B Deck staging abstraction (staging_a/staging_b) by wrapping the WMF SendableSample in an Option, allowing static textures to persist in VRAM without a temporal frame reference.
+- Implemented mplaylist_load_image FFI endpoint for synchronous Deck routing of static assets from C#, safeguarded with CoInitializeEx for background thread stability.
+
+## [Phase 11b & 11c: Static Asset Polymorphism & C-ABI Logic Enforcement] - 2026-08-12
+### Added
+- Extended the C# MediaCue model to explicitly detect IsStaticImage modality natively.
+- Decoupled EngineConductor pre-loading by constructing the LoadPolymorphicCue pipeline to conditionally route cues to Rust via mplaylist_load_image vs mplaylist_load_cue.
+- Integrated IsStaticImage primitive byte into the shared FfiCue struct to enforce the "Blind Muscle" architecture, preventing string-parsing in Rust.
+- Bypassed WMF decoder instantiation in Rust Playlist::fire_cue for static images, loading them instantaneously via WIC and blasting them to the DX11 standby texture buffer to maintain zero-black-frame crossfade physics.
