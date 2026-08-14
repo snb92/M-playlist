@@ -11,6 +11,7 @@ pub mod ndi_sys;
 pub mod ndi_transmitter;
 pub mod ndi_ffi;
 pub mod ndi_receiver;
+pub mod desktop_capture;
 pub mod wic;
 
 // --- PHASE 8 & 9 FFI BOUNDARIES ---
@@ -44,3 +45,4 @@ pub extern "C" fn mplaylist_set_overlay_text(show: bool, text: *const u16) {
         }
     }
 }
+pub mod decklink_capture;

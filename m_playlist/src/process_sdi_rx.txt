@@ -1,0 +1,143 @@
+            let process_sdi_rx = |rx_mutex: &std::sync::Arc<std::sync::Mutex<Option<crate::decklink_capture::DecklinkSharedFrame>>>, 
+                                  staging_mutex: &std::sync::Mutex<Option<(windows::Win32::Graphics::Direct3D11::ID3D11Texture2D, windows::Win32::Graphics::Direct3D11::ID3D11ShaderResourceView)>>, 
+                                  compute_staging: &std::sync::Mutex<Option<ComputeStaging>>| -> Result<Option<ID3D11ShaderResourceView>> {
+                let mut extracted_opt = None;
+                if let Ok(mut lock) = rx_mutex.lock() {
+                    extracted_opt = lock.take();
+                }
+
+                if let Some(extracted) = extracted_opt {
+                    let target_width = extracted.width / 2;
+                    let target_height = extracted.height;
+                    let mut needs_alloc = true;
+
+                    if let Ok(staging_lock) = staging_mutex.lock() {
+                        if let Some((stg_tex, _)) = staging_lock.as_ref() {
+                            let mut stg_desc = D3D11_TEXTURE2D_DESC::default();
+                            unsafe { stg_tex.GetDesc(&mut stg_desc) };
+                            if stg_desc.Width == target_width && stg_desc.Height == target_height {
+                                needs_alloc = false;
+                            }
+                        }
+                    }
+
+                    if needs_alloc {
+                        let desc = D3D11_TEXTURE2D_DESC {
+                            Width: target_width,
+                            Height: target_height,
+                            MipLevels: 1,
+                            ArraySize: 1,
+                            Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_UNORM,
+                            SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                            Usage: windows::Win32::Graphics::Direct3D11::D3D11_USAGE_DYNAMIC,
+                            BindFlags: windows::Win32::Graphics::Direct3D11::D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                            CPUAccessFlags: windows::Win32::Graphics::Direct3D11::D3D11_CPU_ACCESS_WRITE.0 as u32,
+                            ..Default::default()
+                        };
+                        let mut texture: Option<ID3D11Texture2D> = None;
+                        unsafe { self.device.CreateTexture2D(&desc, None, Some(&mut texture))? };
+                        let tex = texture.unwrap();
+                        let res: ID3D11Resource = tex.cast()?;
+                        let mut srv: Option<ID3D11ShaderResourceView> = None;
+                        unsafe { self.device.CreateShaderResourceView(&res, None, Some(&mut srv))? };
+                        
+                        if let Ok(mut staging_lock) = staging_mutex.lock() {
+                            *staging_lock = Some((tex, srv.unwrap()));
+                        }
+                    }
+
+                    if let Ok(staging_lock) = staging_mutex.lock() {
+                        if let Some((stg_tex, srv)) = staging_lock.as_ref() {
+                            let mut mapped = windows::Win32::Graphics::Direct3D11::D3D11_MAPPED_SUBRESOURCE::default();
+                            let stg_res: ID3D11Resource = stg_tex.cast()?;
+                            unsafe {
+                                if self.context.Map(&stg_res, 0, windows::Win32::Graphics::Direct3D11::D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped)).is_ok() {
+                                    let src_ptr = extracted.data_ptr;
+                                    let dst_ptr = mapped.pData as *mut u8;
+                                    for y in 0..target_height {
+                                        std::ptr::copy_nonoverlapping(
+                                            src_ptr.offset((y * extracted.row_bytes) as isize),
+                                            dst_ptr.offset((y * mapped.RowPitch) as isize),
+                                            (extracted.width * 2) as usize
+                                        );
+                                    }
+                                    self.context.Unmap(&stg_res, 0);
+                                }
+                            }
+                            
+                            let mut comp_lock = compute_staging.lock().unwrap();
+                            let need_comp_realloc = match &*comp_lock {
+                                Some(stage) => stage.width != extracted.width || stage.height != extracted.height,
+                                None => true,
+                            };
+                            
+                            if need_comp_realloc {
+                                let uav_desc = D3D11_TEXTURE2D_DESC {
+                                    Width: extracted.width, Height: extracted.height, MipLevels: 1, ArraySize: 1,
+                                    Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R16G16B16A16_FLOAT,
+                                    SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                                    Usage: windows::Win32::Graphics::Direct3D11::D3D11_USAGE_DEFAULT,
+                                    BindFlags: windows::Win32::Graphics::Direct3D11::D3D11_BIND_UNORDERED_ACCESS.0 as u32 | windows::Win32::Graphics::Direct3D11::D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                                    ..Default::default()
+                                };
+                                let mut uav_tex_opt: Option<ID3D11Texture2D> = None;
+                                unsafe { self.device.CreateTexture2D(&uav_desc, None, Some(&mut uav_tex_opt))? };
+                                let uav_tex = uav_tex_opt.unwrap();
+                                let res_uav: ID3D11Resource = uav_tex.cast()?;
+                                let mut uav_view_opt: Option<ID3D11UnorderedAccessView> = None;
+                                unsafe { self.device.CreateUnorderedAccessView(&res_uav, None, Some(&mut uav_view_opt))? };
+                                let mut srv_view_opt: Option<ID3D11ShaderResourceView> = None;
+                                unsafe { self.device.CreateShaderResourceView(&res_uav, None, Some(&mut srv_view_opt))? };
+
+                                *comp_lock = Some(ComputeStaging {
+                                    planar_tex: stg_tex.clone(), uav_tex, uav_view: uav_view_opt.unwrap(), srv_view: srv_view_opt.unwrap(),
+                                    width: extracted.width, height: extracted.height, format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R16G16B16A16_FLOAT.0 as u32,
+                                });
+                            }
+                            
+                            let comp_stage = comp_lock.as_ref().unwrap();
+                            unsafe {
+                                self.context.CSSetShader(&self.compute_shader_uyvy, None);
+                                let srvs = [Some(srv.clone())];
+                                self.context.CSSetShaderResources(4, Some(&srvs));
+                                
+                                let uavs = [Some(comp_stage.uav_view.clone())];
+                                self.context.CSSetUnorderedAccessViews(0, 1, Some(uavs.as_ptr() as *const _), None);
+                                
+                                self.context.Dispatch((target_width + 7) / 8, (target_height + 7) / 8, 1);
+                                
+                                let null_uavs: [Option<ID3D11UnorderedAccessView>; 1] = [None];
+                                self.context.CSSetUnorderedAccessViews(0, 1, Some(null_uavs.as_ptr() as *const _), None);
+                                let null_cs_srvs: [Option<ID3D11ShaderResourceView>; 1] = [None];
+                                self.context.CSSetShaderResources(4, Some(&null_cs_srvs));
+                            }
+                        }
+                    }
+
+                    crate::decklink_capture::decklink_release_frame(extracted.frame_ptr);
+                }
+
+                if let Ok(comp_lock) = compute_staging.lock() {
+                    if let Some(comp_stage) = comp_lock.as_ref() {
+                        return Ok(Some(comp_stage.srv_view.clone()));
+                    }
+                }
+                
+                Ok(None)
+            };
+
+            let mut srv_a_opt = process_dxgi_rx(&self.dxgi_rx_a, &self.dxgi_staging_a)?;
+            if srv_a_opt.is_none() {
+                srv_a_opt = process_sdi_rx(&self.sdi_rx_a, &self.sdi_staging_a, &self.compute_staging_a)?;
+            }
+            if srv_a_opt.is_none() {
+                srv_a_opt = create_srv(&*lock_a, 0)?;
+            }
+            
+            let mut srv_b_opt = process_dxgi_rx(&self.dxgi_rx_b, &self.dxgi_staging_b)?;
+            if srv_b_opt.is_none() {
+                srv_b_opt = process_sdi_rx(&self.sdi_rx_b, &self.sdi_staging_b, &self.compute_staging_b)?;
+            }
+            if srv_b_opt.is_none() {
+                srv_b_opt = create_srv(&*lock_b, 1)?;
+            }

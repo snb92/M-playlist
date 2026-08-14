@@ -322,6 +322,22 @@ namespace MPlaylistApp
             }
         }
 
+        private void AddDxgi_Click(object sender, RoutedEventArgs e)
+        {
+            var cue = new FfiCue { Modality = 4, HardwareIndex = 0 };
+            EngineInterop.mplaylist_load_cue(cue);
+            EngineInterop.mplaylist_fire_cue(cue);
+            StatusText.Text = "Forced DXGI (Modality 4)";
+        }
+
+        private void AddSdi_Click(object sender, RoutedEventArgs e)
+        {
+            var cue = new FfiCue { Modality = 5, HardwareIndex = 0 };
+            EngineInterop.mplaylist_load_cue(cue);
+            EngineInterop.mplaylist_fire_cue(cue);
+            StatusText.Text = "Forced SDI (Modality 5)";
+        }
+
         private void OnPlayClicked(object sender, RoutedEventArgs e)
         {
             if (_isPaused && _activePlayingCue != null)

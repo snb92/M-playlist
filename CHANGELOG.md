@@ -1,6 +1,8 @@
-# Changelog
+﻿# Changelog
 
 ## [Unreleased]
+- **Architecture**: Executed "Phase 14e" (WebView2 Win32 Overlays). Added Modality 6 (WebView2Overlay) multiplexed onto the 8-byte FfiCue.filepath. Refactored ire_cue router into a strict match block. Implemented OpenSharedResource for zero-copy browser VRAM ingestion, and injected branchless Premultiplied Alpha "OVER" composition into the master HLSL shader.
+
 - **Architecture**: Executed "Phase 12b" (Dynamic RTV Lock & HDR Shader Handshake). Mathematically sealed the DWM flip-discard pointer by dynamically creating the `ID3D11RenderTargetView` every frame. Upgraded the HLSL Pixel Shader (`PS_CODE`) to cleanly ingest the 16-bit Float UAV format output by the Compute Shader.
 - **Architecture**: Executed "The Transition Lock" (Phase 14b.2) - Implemented a strict `DateTime` execution lock in the C# `EngineConductor` to mathematically insulate the Rust backend from being overwritten by timeless lookahead logic during visual crossfades.
 - **Architecture**: Executed "Phase 14b" (NDI Receiver & UI Sync). Built a zero-allocation Ping-Pong buffer in System RAM for isolated background network receipt, natively mapping directly to DX11 VRAM.
@@ -51,7 +53,7 @@
 - Implemented Phase 5A: Reverse Zero-Copy. Developed a 2-frame DX11 Pipelined Readback architecture using `D3D11_USAGE_STAGING` textures. The system asynchronously calls `CopyResource` from VRAM to System RAM and safely maps the previous frame to extract a non-blocking raw pixel pointer for future NDI broadcast. Added NDI Toggle FFI bridging.
 - Implemented Phase 5B: NDI Broadcast Output. Dynamically linked `Processing.NDI.Lib.x64.dll` via `libloading` for zero-trust compliance. Created a dedicated OS background thread (`NdiTransmitter`) receiving raw BGRA memory frames via a bounded `sync_channel(2)` with `try_send()`. This guarantees the DX11 Compositor is never stalled by network CPU compression delays.
 - **Hotfix (Phase 5B):** Resolved D3DCompile E_FAIL crash by adding missing `VS_OUT` struct to HLSL Pixel Shader string. Fixed zombie WPF background processes by overriding `OnClosed` in `MainWindow.xaml.cs`. Resolved false-positive unused-import warnings in `media_engine.rs` to verify that the Zero-Copy GPU Mandate (`MFCreateDXGIDeviceManager`, `IMFDXGIBuffer`) is active and successfully bypassing CPU memory.
-- Implemented Feature B: Corner Pinning Geometry. Expanded the HLSL constant buffer with 4-corner NDC coordinates (`float4` aligned), replaced the oversized triangle vertex shader with a 4-vertex Triangle Strip reading corners from the cbuffer, and changed `Draw(3,0)` → `Draw(4,0)`. Added `mplaylist_set_geometry` FFI export routed through a new `SetGeometry` mpsc command. Built 8 WPF sliders (TL/TR/BL/BR × X/Y, range -2.0 to 2.0) with real-time `ValueChanged` wiring for live projection mapping control.
+- Implemented Feature B: Corner Pinning Geometry. Expanded the HLSL constant buffer with 4-corner NDC coordinates (`float4` aligned), replaced the oversized triangle vertex shader with a 4-vertex Triangle Strip reading corners from the cbuffer, and changed `Draw(3,0)` â†’ `Draw(4,0)`. Added `mplaylist_set_geometry` FFI export routed through a new `SetGeometry` mpsc command. Built 8 WPF sliders (TL/TR/BL/BR Ã— X/Y, range -2.0 to 2.0) with real-time `ValueChanged` wiring for live projection mapping control.
 - **Architectural Upgrade (True 3D Perspective Projection):** Eliminated the affine fold artifact when corner pinning by shifting the homography solve to the CPU. Reverted Vertex Shader to `Draw(3,0)` fullscreen canvas. Implemented $3 \times 3$ cyclic convex quad determinant math in Rust to calculate the inverse Adjugate Matrix. Passed to HLSL Pixel Shader via `BlendBuffer` to perform true $uvw.xy / uvw.z$ perspective divide.
 - Implemented Feature D: Automagic File Tracking. Bound a native `System.IO.FileSystemWatcher` to the C# `CueModel`. Re-routed filesystem events (Changed, Renamed, Deleted) across thread boundaries using `Application.Current.Dispatcher.Invoke` to silently fire `EngineInterop.LoadCueToEngine`, enabling lock-free live file hot-swapping without modifying the Rust backend or violating zero-trust bounds. Implemented `IDisposable` memory management in `CueModel` and hooked `_playlist.CollectionChanged` to prevent orphaned watchers.
 - **Hotfix (Feature D):** Resolved `E_ACCESSDENIED` crash caused by asynchronous OS file locks when an external program overwrites a media file. Implemented an asynchronous `IsFileLocked(FileShare.None)` polling gate in `CueModel.cs` to debounce the `FileSystemWatcher` event loop, guaranteeing that the C# Macro-State only commands the Rust backend to load a file after the external renderer has fully released it.
@@ -205,3 +207,13 @@
 
 ### Phase 14c UI Completion
 - Wired Local Hardware Camera (UVC/Capture Cards) ingestion into the C# WPF UI via a new + Add Camera button and mplaylist_get_camera_device_name FFI bridge.
+
+## [Unreleased]
+- **Architecture**: Executed "Phase 14e" (WebView2 Win32 Overlays). Added Modality 6 (WebView2Overlay) multiplexed onto the 8-byte FfiCue.filepath. Refactored ire_cue router into a strict match block. Implemented OpenSharedResource for zero-copy browser VRAM ingestion, and injected branchless Premultiplied Alpha "OVER" composition into the master HLSL shader.
+
+### Added
+- **Phase 14c DXGI Desktop Duplication:** Zero-copy VRAM-to-VRAM COM topology for desktop capture.
+
+### Added
+- **Phase 14d DeckLink SDI Implementation:** Engineered a zero-copy VRAM handoff for uncompressed SDI ingestion via raw IDeckLink COM API, including a resilient C++ build shim and UYVY Macropixel GPU decode.
+

@@ -178,6 +178,8 @@
                 <StackPanel Grid.Row="2" Orientation="Horizontal">
                     <Button Background="#333" Click="OnAddCueClicked" Content="+ Add Cues" Foreground="White" Height="40" Width="100" Margin="0,0,10,0"/>
                     <Button Background="#333" Click="AddLocalCamera_Click" Content="+ Add Camera" Foreground="White" Height="40" Width="100"/>
+                    <Button Background="#333" Click="AddDxgi_Click" Content="+ DXGI" Foreground="White" Height="40" Width="80" Margin="10,0,0,0"/>
+                    <Button Background="#333" Click="AddSdi_Click" Content="+ SDI" Foreground="White" Height="40" Width="80" Margin="10,0,0,0"/>
                 </StackPanel>
             </Grid>
 

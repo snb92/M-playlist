@@ -1,4 +1,4 @@
-# Project TODOs
+﻿# Project TODOs
 
 ## Initialization
 - [x] Create foundational context document (CONTEXT.md)
@@ -73,4 +73,11 @@
   - [x] Phase 14b.3: Polymorphic Unification (Unify asset loading endpoints through mplaylist_load_cue)
 
 - [x] Phase 14c: Local Hardware Ingestion (UVC/Capture Cards)
+
+
+- [x] Phase 14c UI Verification: Add debug button in C# to trigger Modality 5 and verify SDI injection end-to-end.
+- [x] Phase 14d SDK Deployment: Drop the Blackmagic Desktop Video SDK into m_playlist/decklink_sdk to activate the native shim.
+
+- [x] Phase 14e: WebView2 Win32 Overlays (Modality 6)
+- [ ] Phase 14e UI Verification: Create WebView2 instance in WPF and pass IntPtr.Zero to Modality 6 for diagnostics.
 

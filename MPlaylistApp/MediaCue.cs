@@ -18,7 +18,10 @@ namespace MPlaylistApp
         WMFTemporal = 0,
         WICStatic = 1,
         NDILive = 2,
-        LocalCamera = 3
+        LocalCamera = 3,
+        DxgiDesktop = 4,
+        DeckLinkSdi = 5,
+        WebView2Overlay = 6
     }
 
     public class MediaCue : INotifyPropertyChanged
@@ -66,6 +69,7 @@ namespace MPlaylistApp
             {
                 if (string.IsNullOrEmpty(_filePath)) return CueModality.WMFTemporal;
                 if (_filePath.StartsWith("ndi://", StringComparison.OrdinalIgnoreCase)) return CueModality.NDILive;
+                if (_filePath.StartsWith("webview://", StringComparison.OrdinalIgnoreCase)) return CueModality.WebView2Overlay;
                 string ext = System.IO.Path.GetExtension(_filePath).ToLowerInvariant();
                 if (ext == ".png" || ext == ".jpg" || ext == ".jpeg") return CueModality.WICStatic;
                 return CueModality.WMFTemporal;

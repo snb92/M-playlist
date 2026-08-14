@@ -314,3 +314,12 @@ This file contains a timestamped log of all findings, decisions, validations, an
 - **[2026-08-15] FINDING / DECISION:** Diagnosed the "White Screen / Stale RTV" thermodynamic flaw. The DXGI FLIP_DISCARD model physically rotates the backbuffer, meaning the static `master_rtv` pointer became orphaned on window resize or DWM flips, resulting in uninitialized VRAM. Furthermore, the `PS_CODE` Pixel Shader was requesting an 8-bit texture while the Compute Shader outputted a 16-bit Float UAV, causing D3D11 to drop the draw call entirely.
   - **IMPACT:** A completely white, unresponsive video canvas upon playback of 10-bit P010 media.
   - **RESOLUTION:** Executed Phase 12b (Dynamic RTV Lock & HDR Shader Handshake). `render_composited` now dynamically extracts and locks the active backbuffer into a fresh RTV every single frame. The HLSL Pixel Shader was upgraded to `Texture2D<float4>` to flawlessly ingest the 16-bit Float payload, with neutral color grading math (0.0). Added explicit `DXGI_ERROR` telemetry logging on the `Present` boundary.
+
+- **[2026-08-15] FINDING / DECISION:** Implemented Phase 14c DXGI Desktop Duplication.
+  - **IMPACT:** Zero-copy VRAM-to-VRAM topological ingestion of native DWM composited frames, bypassing CPU arrays and resolving catastrophic thermodynamic violations.
+  - **RESOLUTION:** Extended FfiCue alignment matrix by packing a MonitorIndex field to 48 bytes. Spawned lock-free desktop_capture thread ingesting via DuplicateOutput. Mapped frame directly to dxgi_staging SRVs in render_composited.
+
+### [2026-08-15 03:12:49] Cargo Vendoring Block
+**FINDING / DECISION:** The cargo build failed due to the .cargo/config.toml file enforcing a vendor-only policy while the 'cc' crate was unvendored.
+**IMPACT:** The native Rust engine could not build the resilient SDI C++ shim.
+**RESOLUTION:** Temporarily disabled .cargo/config.toml to allow network fetch. Build pipeline restored.

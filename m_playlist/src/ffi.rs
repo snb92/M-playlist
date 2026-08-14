@@ -26,6 +26,7 @@ pub struct FfiCue {
     pub hold_last_frame: u8,
     pub transition_duration_hnsecs: i64,
     pub modality: u8,
+    pub hardware_index: u8,
 }
 
 struct EngineState {
@@ -133,7 +134,7 @@ pub extern "C" fn mplaylist_load_cue(cue: FfiCue) -> bool {
     let filepath = if cue.filepath.is_null() { String::new() } else { unsafe { std::ffi::CStr::from_ptr(cue.filepath).to_string_lossy().into_owned() } };
     let owned_cue = crate::app_logic::OwnedCue {
         filepath, in_point_hnsecs: cue.in_point_hnsecs, out_point_hnsecs: cue.out_point_hnsecs,
-        is_looping: cue.is_looping, hold_last_frame: cue.hold_last_frame, transition_duration_hnsecs: cue.transition_duration_hnsecs, modality: cue.modality,
+        is_looping: cue.is_looping, hold_last_frame: cue.hold_last_frame, transition_duration_hnsecs: cue.transition_duration_hnsecs, modality: cue.modality, hardware_index: cue.hardware_index,
     };
     if let Ok(state) = get_state().lock() {
         if let Some(logic) = state.app_logic.as_ref() {
@@ -156,6 +157,7 @@ pub extern "C" fn mplaylist_fire_cue(cue: FfiCue) -> bool {
         hold_last_frame: cue.hold_last_frame,
         transition_duration_hnsecs: cue.transition_duration_hnsecs,
         modality: cue.modality,
+        hardware_index: cue.hardware_index,
     };
 
     let state = get_state().lock().unwrap();

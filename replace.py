@@ -1,59 +1,18 @@
-use std::sync::Arc;
+﻿import re
 
-use crate::audio_ring::AudioRingBuffer;
-use crate::clock::MasterClock;
-use crate::graphics::Dx11Compositor;
-use crate::media_engine::MediaEngine;
+with open(r'Z:\M-Playlist\m_playlist\src\playlist.rs', 'r') as f:
+    content = f.read()
 
-pub struct Playlist {
-    deck_a: Option<MediaEngine>,
-    deck_b: Option<MediaEngine>,
-    pub is_deck_a_active: bool,
-    pub is_transitioning: bool,
-    pub transition_start_time: f64,
-    pub transition_duration_hnsecs: i64,
-    pub ndi_enabled: bool,
-    pub pending_fire: bool,
-    pub incoming_is_static: bool,
-    pub ndi_run_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-    pub dxgi_run_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-}
+# We want to replace the body of fire_cue.
+# Let's find pub fn fire_cue
+start = content.find('pub fn fire_cue')
+end = content.find('pub fn scrub', start)
 
-impl Playlist {
-    pub fn new() -> Self {
-        Self {
-            deck_a: None,
-            deck_b: None,
-            is_deck_a_active: false,
-            is_transitioning: false,
-            transition_start_time: 0.0,
-            transition_duration_hnsecs: 0,
-            ndi_enabled: false,
-            pending_fire: false,
-            incoming_is_static: false,
-            ndi_run_flag: None,
-            dxgi_run_flag: None,
-        }
-    }
+if start == -1 or end == -1:
+    print('Could not find fire_cue')
+    exit(1)
 
-    pub fn load_cue(&mut self, target_cue: &crate::app_logic::OwnedCue, graphics_arc: &std::sync::Arc<crate::graphics::Dx11Compositor>) {
-        let standby_deck = if self.is_deck_a_active { 1 } else { 0 };
-        
-        if target_cue.modality == 2 || target_cue.modality == 3 || target_cue.modality == 4 {
-            // NDI/LocalCamera/DXGI: Do nothing during preload. The thread spins up natively inside fire_cue.
-            return;
-        } else if target_cue.modality == 1 {
-            // WIC Image: Decode natively and blast into the standby VRAM immediately
-            use std::os::windows::ffi::OsStrExt;
-            let mut wpath: Vec<u16> = std::ffi::OsStr::new(&target_cue.filepath).encode_wide().collect();
-            wpath.push(0);
-            if let Ok(texture) = crate::wic::load_image_to_texture(&graphics_arc.device, wpath.as_ptr()) {
-                let _ = graphics_arc.update_deck_static_texture(standby_deck, &texture);
-            }
-        }
-    }
-
-    pub fn fire_cue(
+new_fire_cue = '''pub fn fire_cue(
         &mut self,
         target_cue: &crate::app_logic::OwnedCue,
         _tx: &std::sync::mpsc::Sender<crate::app_logic::EngineCommand>,
@@ -185,98 +144,10 @@ impl Playlist {
         }
     }
 
-    pub fn scrub(&self, target_hnsecs: i64) {
-        let active_engine = if self.is_deck_a_active {
-            self.deck_a.as_ref()
-        } else {
-            self.deck_b.as_ref()
-        };
-        if let Some(engine) = active_engine {
-            engine.pending_scrub.store(target_hnsecs, std::sync::atomic::Ordering::SeqCst);
-        }
-    }
+    '''
 
-    pub fn stop(&mut self) {
-        self.deck_a = None;
-        self.deck_b = None;
-        self.is_transitioning = false;
-        self.pending_fire = false;
-        println!("M-Playlist [LOGIC]: Playlist Stopped. Decks released.");
-    }
+new_content = content[:start] + new_fire_cue + content[end:]
+with open(r'Z:\M-Playlist\m_playlist\src\playlist.rs', 'w') as f:
+    f.write(new_content)
 
-    pub fn tick(&mut self, clock: &MasterClock, blend_factor: &std::sync::atomic::AtomicU32, graphics: &Dx11Compositor, geometry: &[[f32; 4]; 4], crop: &[f32; 4], pan_zoom: &[f32; 3], color: &[f32; 3]) {
-        
-        if self.pending_fire {
-            let incoming_ready = if self.incoming_is_static {
-                true
-            } else if self.is_deck_a_active {
-                self.deck_b.as_ref().map_or(false, |d| d.has_started.load(std::sync::atomic::Ordering::Acquire))
-            } else {
-                self.deck_a.as_ref().map_or(false, |d| d.has_started.load(std::sync::atomic::Ordering::Acquire))
-            };
-
-            if incoming_ready {
-                self.pending_fire = false;
-                self.is_deck_a_active = !self.is_deck_a_active;
-                
-                if self.transition_duration_hnsecs > 0 {
-                    self.is_transitioning = true;
-                    self.transition_start_time = clock.get_time_seconds();
-                } else {
-                    // Hard cut - instantly drop outgoing deck
-                    self.is_transitioning = false;
-                    if self.is_deck_a_active {
-                        blend_factor.store(0.0_f32.to_bits(), std::sync::atomic::Ordering::Release);
-                        self.deck_b = None; 
-                    } else {
-                        blend_factor.store(1.0_f32.to_bits(), std::sync::atomic::Ordering::Release);
-                        self.deck_a = None;
-                    }
-                }
-            }
-        }
-
-        if self.is_transitioning {
-            let elapsed = clock.get_time_seconds() - self.transition_start_time;
-            let duration = self.transition_duration_hnsecs as f64 / 10_000_000.0;
-            let mut progress = (elapsed / duration) as f32;
-            
-            if progress > 1.0 { progress = 1.0; }
-            if progress < 0.0 { progress = 0.0; }
-
-            // Ping-Pong Logic: is_deck_a_active reflects the deck we transitioned into
-            let actual_blend = if self.is_deck_a_active {
-                1.0 - progress 
-            } else {
-                progress
-            };
-            
-            blend_factor.store(actual_blend.to_bits(), std::sync::atomic::Ordering::Release);
-
-            if progress >= 1.0 {
-                self.is_transitioning = false;
-                
-                if self.is_deck_a_active {
-                    blend_factor.store(0.0_f32.to_bits(), std::sync::atomic::Ordering::Release);
-                    self.deck_b = None; // Drop outgoing deck B
-                } else {
-                    blend_factor.store(1.0_f32.to_bits(), std::sync::atomic::Ordering::Release);
-                    self.deck_a = None; // Drop outgoing deck A
-                }
-                println!("M-Playlist [LOGIC]: Transition Complete. Outgoing deck VRAM released.");
-            }
-        }
-        
-        // UNCONDITIONALLY RENDER IF ACTIVE
-        let blend = f32::from_bits(blend_factor.load(std::sync::atomic::Ordering::Acquire));
-        if let Err(e) = graphics.render_composited(blend, geometry, crop, pan_zoom, color) {
-            eprintln!("M-Playlist [RENDER ERROR]: Failed to render composited: {:?}", e);
-        }
-    }
-    
-    pub fn has_active_decks(&self) -> bool {
-        self.deck_a.is_some() || self.deck_b.is_some()
-    }
-}
-
-
+print('Success')

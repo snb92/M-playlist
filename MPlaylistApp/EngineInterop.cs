@@ -13,6 +13,7 @@ namespace MPlaylistApp
         public byte HoldLastFrame;
         public long TransitionDurationHnsecs;
         public byte Modality;
+        public byte HardwareIndex;
     }
 
     public static class EngineInterop
@@ -60,7 +61,8 @@ namespace MPlaylistApp
                     IsLooping = (byte)(model.IsLooping ? 1 : 0),
                     HoldLastFrame = (byte)(model.HoldLastFrame ? 1 : 0),
                     TransitionDurationHnsecs = (long)(model.TransitionDuration * 10000000.0),
-                    Modality = (byte)model.Modality
+                    Modality = (byte)model.Modality,
+                    HardwareIndex = (byte)0 // Default to device 0, UI logic can update this later
                 };
                 mplaylist_load_cue(ffiCue);
             }

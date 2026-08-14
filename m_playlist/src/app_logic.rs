@@ -16,6 +16,7 @@ pub struct EngineCue {
     pub hold_last_frame: bool,
     pub transition_duration_hnsecs: i64,
     pub modality: u8,
+    pub hardware_index: u8,
 }
 #[derive(Clone, Debug)]
 pub struct OwnedCue {
@@ -26,6 +27,7 @@ pub struct OwnedCue {
     pub hold_last_frame: u8,
     pub transition_duration_hnsecs: i64,
     pub modality: u8,
+    pub hardware_index: u8,
 }
 
 pub enum EngineCommand {
