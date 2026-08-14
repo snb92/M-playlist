@@ -29,11 +29,14 @@ pub struct OwnedCue {
 }
 
 pub enum EngineCommand {
-    LoadCue(EngineCue),
+    LoadCue(OwnedCue),
     FireCue(OwnedCue),
     SetAudioDevice(u32),
     Scrub(i64),
     SetGeometry([f32; 8]),
+    SetCrop { left: f32, top: f32, right: f32, bottom: f32 },
+    SetPanZoom { pan_x: f32, pan_y: f32, zoom: f32 },
+    SetColor { brightness: f32, contrast: f32, saturation: f32 },
     Resize(u32, u32),
     SetVolume(f32),
     Pause,
@@ -77,6 +80,9 @@ impl AppLogic {
                 [-1.0,-1.0, 0.0, 0.0],  // bottom_left
                 [ 1.0,-1.0, 0.0, 0.0],  // bottom_right
             ];
+            let mut crop_state = [0.0, 0.0, 0.0, 0.0];
+            let mut pan_zoom_state = [0.0, 0.0, 1.0];
+            let mut color_state = [1.0, 1.0, 1.0];
             
             // STRIKE 1 & 3: Load NDI dynamically and spin up Sender thread
             match crate::ndi_ffi::NdiLibrary::load() {
@@ -181,7 +187,7 @@ impl AppLogic {
                 while let Ok(command) = rx.try_recv() {
                     match command {
                         EngineCommand::LoadCue(cue) => {
-                            playlist.load_cue(cue);
+                            playlist.load_cue(&cue, &graphics);
                         }
                         EngineCommand::FireCue(owned_cue) => {
                             playlist.fire_cue(&owned_cue, &tx_clone, ring_a.clone(), ring_b.clone(), blend_factor.clone(), clock.clone(), graphics.clone());
@@ -203,6 +209,15 @@ impl AppLogic {
                                 [c[4], c[5], 0.0, 0.0],
                                 [c[6], c[7], 0.0, 0.0],
                             ];
+                        }
+                        EngineCommand::SetCrop { left, top, right, bottom } => {
+                            crop_state = [left, top, right, bottom];
+                        }
+                        EngineCommand::SetPanZoom { pan_x, pan_y, zoom } => {
+                            pan_zoom_state = [pan_x, pan_y, zoom];
+                        }
+                        EngineCommand::SetColor { brightness, contrast, saturation } => {
+                            color_state = [brightness, contrast, saturation];
                         }
                         EngineCommand::Resize(w, h) => {
                             if let Err(e) = graphics.resize(w, h) {
@@ -239,7 +254,7 @@ impl AppLogic {
                 }
                 
                 // 2. Unconditionally tick and render at 60Hz
-                playlist.tick(&clock, &blend_factor, &graphics, &geometry_state);
+                playlist.tick(&clock, &blend_factor, &graphics, &geometry_state, &crop_state, &pan_zoom_state, &color_state);
                 
                 // 3. Sleep for the remainder of the 16.6ms window
                 let elapsed = start_time.elapsed();

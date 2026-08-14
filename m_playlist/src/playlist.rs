@@ -34,8 +34,21 @@ impl Playlist {
         }
     }
 
-    pub fn load_cue(&mut self, _cue: crate::app_logic::EngineCue) {
-        // Obsoleted by Muscle Lobotomy. State maintained in C# Brain.
+    pub fn load_cue(&mut self, target_cue: &crate::app_logic::OwnedCue, graphics_arc: &std::sync::Arc<crate::graphics::Dx11Compositor>) {
+        let standby_deck = if self.is_deck_a_active { 1 } else { 0 };
+        
+        if target_cue.modality == 2 || target_cue.modality == 3 {
+            // NDI/LocalCamera: Do nothing during preload. The thread spins up natively inside fire_cue.
+            return;
+        } else if target_cue.modality == 1 {
+            // WIC Image: Decode natively and blast into the standby VRAM immediately
+            use std::os::windows::ffi::OsStrExt;
+            let mut wpath: Vec<u16> = std::ffi::OsStr::new(&target_cue.filepath).encode_wide().collect();
+            wpath.push(0);
+            if let Ok(texture) = crate::wic::load_image_to_texture(&graphics_arc.device, wpath.as_ptr()) {
+                let _ = graphics_arc.update_deck_static_texture(standby_deck, &texture);
+            }
+        }
     }
 
     pub fn fire_cue(
@@ -48,7 +61,6 @@ impl Playlist {
         clock: Arc<MasterClock>,
         graphics: Arc<Dx11Compositor>,
     ) {
-        // Map to EngineCue for MediaEngine legacy compatibility
         let engine_cue = crate::app_logic::EngineCue {
             filepath: target_cue.filepath.clone(),
             in_point_hnsecs: target_cue.in_point_hnsecs,
@@ -60,15 +72,14 @@ impl Playlist {
         };
         let cue = &engine_cue;
 
-        // Both WIC (1) and NDI (2) must evaluate as static/timeless to bypass WMF MediaEngine temporal logic.
         let is_static = cue.modality == 1 || cue.modality == 2;
         let transition_ms = target_cue.transition_duration_hnsecs / 10000;
 
-        let has_active_deck = self.deck_a.is_some() || self.deck_b.is_some() || blend_factor.load(std::sync::atomic::Ordering::Acquire) != 0; // fallback just in case
+        let has_active_deck = self.deck_a.is_some() || self.deck_b.is_some() || blend_factor.load(std::sync::atomic::Ordering::Acquire) != 0; 
         let transition_hnsecs = (transition_ms as i64) * 10_000;
         
         self.pending_fire = true;
-        self.incoming_is_static = cue.modality == 1 || cue.modality == 2;
+        self.incoming_is_static = cue.modality == 1 || cue.modality == 2 || cue.modality == 3;
 
         if cue.modality == 2 {
             println!("M-Playlist [NDI]: Intercepted Modality 2! Ready to spawn receiver.");
@@ -88,7 +99,6 @@ impl Playlist {
             if !self.is_deck_a_active {
                 println!("M-Playlist [LOGIC]: Preparing Deck A (Crossfade)...");
                 ring_a.flush();
-                // graphics.clear_deck(0); - we don't clear, might have static image!
                 if is_static {
                     self.deck_a = None;
                     if cue.modality == 1 {
@@ -195,7 +205,7 @@ impl Playlist {
         println!("M-Playlist [LOGIC]: Playlist Stopped. Decks released.");
     }
 
-    pub fn tick(&mut self, clock: &MasterClock, blend_factor: &std::sync::atomic::AtomicU32, graphics: &Dx11Compositor, geometry: &[[f32; 4]; 4]) {
+    pub fn tick(&mut self, clock: &MasterClock, blend_factor: &std::sync::atomic::AtomicU32, graphics: &Dx11Compositor, geometry: &[[f32; 4]; 4], crop: &[f32; 4], pan_zoom: &[f32; 3], color: &[f32; 3]) {
         
         if self.pending_fire {
             let incoming_ready = if self.incoming_is_static {
@@ -260,7 +270,7 @@ impl Playlist {
         
         // UNCONDITIONALLY RENDER IF ACTIVE
         let blend = f32::from_bits(blend_factor.load(std::sync::atomic::Ordering::Acquire));
-        if let Err(e) = graphics.render_composited(blend, geometry) {
+        if let Err(e) = graphics.render_composited(blend, geometry, crop, pan_zoom, color) {
             eprintln!("M-Playlist [RENDER ERROR]: Failed to render composited: {:?}", e);
         }
     }
@@ -269,3 +279,5 @@ impl Playlist {
         self.deck_a.is_some() || self.deck_b.is_some()
     }
 }
+
+

@@ -13,6 +13,14 @@ namespace MPlaylistApp
         FadeOut
     }
 
+    public enum CueModality : byte
+    {
+        WMFTemporal = 0,
+        WICStatic = 1,
+        NDILive = 2,
+        LocalCamera = 3
+    }
+
     public class MediaCue : INotifyPropertyChanged
     {
         private string _cueID = Guid.NewGuid().ToString();

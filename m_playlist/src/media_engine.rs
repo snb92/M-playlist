@@ -8,9 +8,8 @@ use windows::Win32::Media::MediaFoundation::{
     MFCreateAttributes, IMFAttributes, MF_SOURCE_READER_D3D_MANAGER, MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING,
     MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS,
     MFCreateMediaType, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE,
-    MFMediaType_Audio, MFAudioFormat_Float, MF_SOURCE_READER_FIRST_AUDIO_STREAM, MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-    MF_SOURCE_READERF_ENDOFSTREAM, IMFDXGIBuffer, MFVideoFormat_ARGB32, MFMediaType_Video,
-    MF_MT_AUDIO_NUM_CHANNELS, MF_MT_AUDIO_SAMPLES_PER_SECOND
+    MFMediaType_Audio, MF_SOURCE_READER_FIRST_AUDIO_STREAM, MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+    MF_SOURCE_READERF_ENDOFSTREAM, IMFDXGIBuffer, MFMediaType_Video
 };
 
 
@@ -72,6 +71,8 @@ impl MediaEngine {
         let out_point = cue.out_point_hnsecs;
         let is_looping = cue.is_looping;
         let hold_last_frame = cue.hold_last_frame;
+        let modality = cue.modality;
+        let filepath = cue.filepath.clone();
 
         self._decoder_thread = Some(thread::spawn(move || {
             unsafe {
@@ -104,10 +105,49 @@ impl MediaEngine {
                 attributes.SetUINT32(&MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, 1).unwrap();
 
                 // 5. Initialize the Source Reader with the File Path and GPU Attributes
-                let pcwstr_path = PCWSTR::from_raw(path_vec.as_ptr());
-                let source_reader: IMFSourceReader = match MFCreateSourceReaderFromURL(pcwstr_path, &attributes) {
-                    Ok(reader) => reader,
-                    Err(e) => { eprintln!("FATAL: Failed to load file into MF: {:?}", e); return; }
+                let source_reader: IMFSourceReader = if modality == 3 {
+                    let mut media_source: Option<windows::Win32::Media::MediaFoundation::IMFMediaSource> = None;
+                    let mut sp_attributes: Option<IMFAttributes> = None;
+                    MFCreateAttributes(&mut sp_attributes, 1).unwrap();
+                    let attrs = sp_attributes.unwrap();
+                    attrs.SetGUID(&windows::Win32::Media::MediaFoundation::MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, &windows::Win32::Media::MediaFoundation::MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID).unwrap();
+                    let mut devices: *mut Option<windows::Win32::Media::MediaFoundation::IMFActivate> = std::ptr::null_mut();
+                    let mut count = 0;
+                    if windows::Win32::Media::MediaFoundation::MFEnumDeviceSources(&attrs, &mut devices, &mut count).is_ok() && !devices.is_null() && count > 0 {
+                        let mut target_index = 0;
+                        if filepath.starts_with("camera://") {
+                            if let Ok(idx) = filepath[9..].parse::<u32>() {
+                                target_index = idx;
+                            }
+                        }
+                        
+                        let device_slice = std::slice::from_raw_parts(devices, count as usize);
+                        if target_index < count {
+                            if let Some(device) = &device_slice[target_index as usize] {
+                                if let Ok(source) = device.ActivateObject::<windows::Win32::Media::MediaFoundation::IMFMediaSource>() {
+                                    media_source = Some(source);
+                                }
+                            }
+                        }
+                        // Clean up
+                        for i in 0..count as usize {
+                            let _ = std::ptr::read(devices.add(i));
+                        }
+                        windows::Win32::System::Com::CoTaskMemFree(Some(devices as *const core::ffi::c_void));
+                    }
+                    
+                    if let Some(src) = media_source {
+                        windows::Win32::Media::MediaFoundation::MFCreateSourceReaderFromMediaSource(&src, &attributes).expect("Failed to create SourceReader from Camera")
+                    } else {
+                        eprintln!("FATAL: Failed to find Camera Media Source");
+                        return;
+                    }
+                } else {
+                    let pcwstr_path = PCWSTR::from_raw(path_vec.as_ptr());
+                    match MFCreateSourceReaderFromURL(pcwstr_path, &attributes) {
+                        Ok(reader) => reader,
+                        Err(e) => { eprintln!("FATAL: Failed to load file into MF: {:?}", e); return; }
+                    }
                 };
 
 
@@ -115,7 +155,7 @@ impl MediaEngine {
                 // Native Output (Matches B8G8R8A8 Swapchain exactly, allows native 4K scaling)
                 let video_type = MFCreateMediaType().unwrap();
                 video_type.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video).unwrap();
-                video_type.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_ARGB32).unwrap(); 
+                video_type.SetGUID(&MF_MT_SUBTYPE, &windows::Win32::Media::MediaFoundation::MFVideoFormat_P010).unwrap(); 
                 
                 if let Err(e) = source_reader.SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32, None, &video_type) {
                     eprintln!("FATAL: Video SetCurrentMediaType failed! {:?}", e);
@@ -487,3 +527,4 @@ impl Drop for MediaEngine {
         }
     }
 }
+

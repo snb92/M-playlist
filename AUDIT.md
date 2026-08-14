@@ -169,15 +169,15 @@ This file contains a timestamped log of all findings, decisions, validations, an
 - **FINDING / DECISION:** Discovered that Hardware Decoders take up to 2 seconds of real-time to purge pre-roll frames when jumping to a distant `InPoint` keyframe, because the extraction loop is throttled by the 1-second capacity of the `AudioRingBuffer`. Because `Playlist` instantly killed the outgoing deck on a Hard Cut, the screen was completely black while the new deck warmed up.
 - **IMPACT:** A 1-2 second flash of black video on every single Hard Cut or Crossfade (reported as a "jerk").
 - **RESOLUTION:** Increased `AudioRingBuffer` size to 10 seconds to allow the decoder to instantly pump the pre-roll frames without blocking. Completely restructured the `Playlist` `tick()` loop to introduce a `pending_fire` state. The outgoing deck is now kept alive and rendering on screen until the incoming deck's `MediaEngine.has_started` atomic boolean flips to `true` (indicating its first valid video frame has successfully landed in VRAM). This guarantees a flawless 0ms transition with zero black frames.
-# #   [ 2 0 2 6 - 0 8 - 1 1 ]   ( P h a s e   4 . 7 :   M a c r o - S t a t e   E x e c u t i o n   C o n d u c t o r )  
- -   * * F I N D I N G   /   D E C I S I O N : * *   I d e n t i f i e d   t h a t   t h e   R u s t   \ M e d i a E n g i n e \   i s   a   b l i n d   m u s c l e   a n d   c a n n o t   a u t o n o m o u s l y   e n f o r c e   \ E n d B e h a v i o r \   o p e r a t i o n s   l i k e   s t o p p i n g   o r   a d v a n c i n g   c u e s .  
- -   * * I M P A C T : * *   A   r u n n i n g   c u e   w o u l d   s i m p l y   h i t   E O F   a n d   f r e e z e ,   i g n o r i n g   t h e   \ O u t P o i n t H N S \   a n d   r o u t i n g   i n s t r u c t i o n s   d e f i n e d   i n   t h e   \ M e d i a C u e \ .  
- -   * * R E S O L U T I O N : * *   D e l e g a t e d   t h e   t h e r m o d y n a m i c   b o u n d a r y   c h e c k s   ( O u t - P o i n t   i n t e r c e p t s )   e x c l u s i v e l y   t o   t h e   C #   \ D i s p a t c h e r T i m e r \   t e l e m e t r y   l o o p .   W h e n   t h e   p l a y h e a d   c r o s s e s   t h e   O u t - P o i n t ,   C #   e x p l i c i t l y   c o m m a n d s   t h e   R u s t   e n g i n e   v i a   F F I   ( \ m p l a y l i s t _ s t o p \ ,   \ m p l a y l i s t _ s c r u b _ t o \ ,   o r   f i r i n g   t h e   n e x t   c u e ) ,   p r e s e r v i n g   t h e   B r a i n / M u s c l e   a r c h i t e c t u r a l   s e p a r a t i o n .   I n c l u d e d   a   3 0 0 m s   d e b o u n c e   t o   p r e v e n t   t h e   3 0 H z   C #   t i m e r   f r o m   s p a m m i n g   t h e   F F I   d u r i n g   t h e   p h y s i c a l   s e e k / t r a n s i t i o n   l a t e n c y   w i n d o w .  
- # #   [ 2 0 2 6 - 0 8 - 1 1 ]   ( P h a s e   4 . 8 :   G r i d   T e l e m e t r y   &   A u d i o   M a t h )  
- -   * * F I N D I N G   /   D E C I S I O N : * *   L o g a r i t h m i c   V o l u m e   s l i d e r   v a l u e s   i n   t h e   U I   c o u l d   n o t   b e   d i r e c t l y   p u s h e d   i n t o   t h e   h a r d w a r e   a u d i o   b u f f e r s .   D o i n g   t h e   m a t h   i n   C #   r i s k s   p r e c i s i o n   l o s s   a n d   r o u n d i n g   a n o m a l i e s   a c r o s s   t h e   f l o a t   b o u n d a r y .  
- -   * * I M P A C T : * *   A   n a i v e   d e c i b e l   s c a l i n g   a p p l i e d   d i r e c t l y   t o   t h e   W A S A P I   f l o a t   b u f f e r   w o u l d   r e s u l t   i n   s e v e r e l y   d i s t o r t e d / c l i p p i n g   a u d i o .  
- -   * * R E S O L U T I O N : * *   I m p l e m e n t e d   P h a s e   4 . 8 .   C r e a t e d   \ m p l a y l i s t _ s e t _ v o l u m e _ d b \   i n   R u s t   t o   p e r f o r m   t h e   s t r i c t   \ 1 0 _ f 3 2 . p o w f ( d b   /   2 0 . 0 ) \   c o n v e r s i o n   i n s i d e   t h e   F F I   b o u n d a r y .   A   c l a m p   w a s   i n t r o d u c e d   f o r   \ d b   < =   - 6 0 . 0 \   t o   f o r c e   a b s o l u t e   s i l e n c e   ( 0 . 0 ) .   P a s s e d   t h i s   m u l t i p l i e r   l o c k - f r e e   t o   t h e   W A S A P I   t h r e a d   t o   m u l t i p l y   r a w   s a m p l e s   j u s t   p r i o r   t o   e n d p o i n t   d e l i v e r y .   A l s o   i n j e c t e d   \ I s A c t i v e P l a y i n g \   t r a c k i n g   i n t o   t h e   W P F   g r i d   t o   p r o v i d e   i m m e d i a t e   v i s u a l   c o n f i r m a t i o n   o f   t h e   L i v e   s t a t e   t o   t h e   o p e r a t o r .  
- 
+## [2026-08-11] (Phase 4.7: Macro-State Execution Conductor)
+- **FINDING / DECISION:** Identified that the Rust \MediaEngine\ is a blind muscle and cannot autonomously enforce \EndBehavior\ operations like stopping or advancing cues.
+- **IMPACT:** A running cue would simply hit EOF and freeze, ignoring the \OutPointHNS\ and routing instructions defined in the \MediaCue\.
+- **RESOLUTION:** Delegated the thermodynamic boundary checks (Out-Point intercepts) exclusively to the C# \DispatcherTimer\ telemetry loop. When the playhead crosses the Out-Point, C# explicitly commands the Rust engine via FFI (\mplaylist_stop\, \mplaylist_scrub_to\, or firing the next cue), preserving the Brain/Muscle architectural separation. Included a 300ms debounce to prevent the 30Hz C# timer from spamming the FFI during the physical seek/transition latency window.
+## [2026-08-11] (Phase 4.8: Grid Telemetry & Audio Math)
+- **FINDING / DECISION:** Logarithmic Volume slider values in the UI could not be directly pushed into the hardware audio buffers. Doing the math in C# risks precision loss and rounding anomalies across the float boundary.
+- **IMPACT:** A naive decibel scaling applied directly to the WASAPI float buffer would result in severely distorted/clipping audio.
+- **RESOLUTION:** Implemented Phase 4.8. Created \mplaylist_set_volume_db\ in Rust to perform the strict \10_f32.powf(db / 20.0)\ conversion inside the FFI boundary. A clamp was introduced for \db <= -60.0\ to force absolute silence (0.0). Passed this multiplier lock-free to the WASAPI thread to multiply raw samples just prior to endpoint delivery. Also injected \IsActivePlaying\ tracking into the WPF grid to provide immediate visual confirmation of the Live state to the operator.
+
 - **[2026-08-11T12:50:00Z] FINDING / DECISION:** The WASAPI Buzzing Trap - Pausing the master clock by simply dropping incoming frames will cause a catastrophic audio loop due to the OS continuously reading stale data from the circular buffer. The engine must actively push silence (0.0) when paused.
 - **IMPACT:** Preserves WASAPI thread integrity and prevents infinite audio buzzing loops while locking the video frame during a pause state.
 - **RESOLUTION:** Implemented 'Acoustic Silence Override' in audio_wasapi.rs. When MasterClock is paused, the audio thread stays alive and manually injects 0.0 chunks, safely draining the buffer and locking A/V sync without dropping the DX11 surface.
@@ -202,11 +202,11 @@ This file contains a timestamped log of all findings, decisions, validations, an
 - **IMPACT:** NDI audio stream dynamically captures all 16 channels of the Routing Matrix without triggering WASAPI callback heap allocations.
 - **RESOLUTION:** Reorganized WASAPI frame extraction loop to pull Graveyard memory safely before frame processing, weave planar channels mathematically, and bypass the stereo downmix.
 
- 
- -   * * F I N D I N G : * *   N D I   S D K   6   s t r u c t   a l i g n m e n t   m i s m a t c h   i n   F F I .   T h e   C + +   S D K   u s e s   4 - b y t e   B O O L   w h i l e   R u s t   u s e s   1 - b y t e    o o l   f o r   N D I l i b _ s e n d _ c r e a t e _ t .   T h i s   c a u s e d   m e m o r y   m i s a l i g n m e n t   a n d   s i l e n t   i n i t i a l i z a t i o n   f a i l u r e s .  
- -   * * I M P A C T : * *   T h e   N D I   S e n d e r   w a s   s i l e n t l y   a b o r t i n g   a t   b o o t   d u e   t o   u n i n i t i a l i z e d   p a d d i n g   b y t e s   b e i n g   r e a d   a s   i n v a l i d   c o n f i g u r a t i o n s .  
- -   * * R E S O L U T I O N : * *   R e d e f i n e d   N D I l i b _ s e n d _ c r e a t e _ t   b i n d i n g s   i n   s r c / n d i _ f f i . r s   t o   u s e   i 3 2   f o r   b o o l e a n   f l a g s ,   r e s t o r i n g   s t r i c t   m e m o r y   a l i g n m e n t .   H a r d c o d e d   p _ n d i _ n a m e   t o   s t a t i c   m e m o r y   t o   p r e v e n t   l i f e t i m e   d r o p s .   Z e r o - a l l o c a t i o n   l o o p   c o n s t r a i n t s   r e m a i n   i n t a c t .  
- 
+
+- **FINDING:** NDI SDK 6 struct alignment mismatch in FFI. The C++ SDK uses 4-byte BOOL while Rust uses 1-byte ool for NDIlib_send_create_t. This caused memory misalignment and silent initialization failures.
+- **IMPACT:** The NDI Sender was silently aborting at boot due to uninitialized padding bytes being read as invalid configurations.
+- **RESOLUTION:** Redefined NDIlib_send_create_t bindings in src/ndi_ffi.rs to use i32 for boolean flags, restoring strict memory alignment. Hardcoded p_ndi_name to static memory to prevent lifetime drops. Zero-allocation loop constraints remain intact.
+
 - **[2026-08-11] FINDING / DECISION:** Eradicated Swapchain Coupling; locked DX11 and NDI backbuffers to immutable 1080p.
 - **IMPACT:** Resolves sub-SD broadcast blurring caused by dynamic UI resizing. NDI stream always maintains 1920x1080 resolution.
 - **RESOLUTION:** Implemented Phase 6 Path B. Initialized Direct2D and DirectWrite. Render target locked to 1920x1080. Added zero-copy Direct2D typography pass immediately after DX11 video pass in ender_composited.
@@ -280,3 +280,37 @@ This file contains a timestamped log of all findings, decisions, validations, an
 - **[2026-08-13 18:10:00] FINDING / DECISION:** C# ConductorLoop timeless lookahead aggressively overwrote the Standby Deck during visual crossfades when transitioning from Timeless modalities (PNG/NDI).
 - **IMPACT:** Transition visuals would immediately drop because the target deck was overwritten by the 5-second lookahead logic before the crossfade completed.
 - **RESOLUTION:** Executed Phase 14b.2 (The Transition Lock). Implemented a strict `DateTime` execution lock in the EngineConductor to mathematically insulate the Rust Muscle from C# state-thrashing during transitions.
+
+- **[2026-08-13 18:46:00] FINDING / DECISION:** The C# UI crashed attempting to call \mplaylist_load_image\ after a git rollback previously deleted it. Also identified missing enum \CueModality\ in C# and missing UI transport methods on \EngineConductor\.
+- **IMPACT:** The C# Brain attempted to call a ghost C-ABI function, and failing to define \CueModality\ broke the build and caused UI control binding failures.
+- **RESOLUTION:** Executed Phase 14b.3 (Polymorphic Unification). Eradicated \mplaylist_load_image\ and unified all asset loads through \mplaylist_load_cue\. Defined \CueModality\ enum in C# and restored missing transport control wrappers to \EngineConductor\. Re-mapped \mplaylist_fire_cue\ C-ABI to accept the full \FfiCue\ structural payload to prevent hard crashes. Rebuilt C# client successfully.
+
+- **FINDING / DECISION (2026-08-13 19:04:54):** Executed Phase 14c - Local Hardware Ingestion (UVC/Capture Cards). Restored Phase 14b changes after accidental reversion during git checkout.
+- **IMPACT:** Local physical webcams and capture cards can now be loaded natively through the Zero-Copy DX11 WMF pipeline via the new CueModality.LocalCamera = 3.
+- **RESOLUTION:** Implemented MFEnumDeviceSources in Rust ffi.rs to expose devices. Modified media_engine.rs to instantiate IMFMediaSource directly for Modality 3, bypassing URL parsing. Both Rust and C# layers synchronized and compiled cleanly.
+
+- **[DATE] FINDING / DECISION:** Completed Phase 14c UI Hardware Matrix implementation.
+
+- **[2026-08-13 18:46:00] FINDING / DECISION:** The C# UI crashed attempting to call \mplaylist_load_image\ after a git rollback previously deleted it. Also identified missing enum \CueModality\ in C# and missing UI transport methods on \EngineConductor\.
+- **IMPACT:** The C# Brain attempted to call a ghost C-ABI function, and failing to define \CueModality\ broke the build and caused UI control binding failures.
+- **RESOLUTION:** Executed Phase 14b.3 (Polymorphic Unification). Eradicated \mplaylist_load_image\ and unified all asset loads through \mplaylist_load_cue\. Defined \CueModality\ enum in C# and restored missing transport control wrappers to \EngineConductor\. Re-mapped \mplaylist_fire_cue\ C-ABI to accept the full \FfiCue\ structural payload to prevent hard crashes. Rebuilt C# client successfully.
+
+- **FINDING / DECISION (2026-08-13 19:04:54):** Executed Phase 14c - Local Hardware Ingestion (UVC/Capture Cards). Restored Phase 14b changes after accidental reversion during git checkout.
+- **IMPACT:** Local physical webcams and capture cards can now be loaded natively through the Zero-Copy DX11 WMF pipeline via the new CueModality.LocalCamera = 3.
+- **RESOLUTION:** Implemented MFEnumDeviceSources in Rust ffi.rs to expose devices. Modified media_engine.rs to instantiate IMFMediaSource directly for Modality 3, bypassing URL parsing. Both Rust and C# layers synchronized and compiled cleanly.
+
+- **[DATE] FINDING / DECISION:** Completed Phase 14c UI Hardware Matrix implementation.
+  - **IMPACT:** Local capture cards and UVC webcams can now be seamlessly selected directly from the WPF UI as camera://<index>.
+  - **RESOLUTION:** Added mplaylist_get_camera_device_count and mplaylist_get_camera_device_name FFI bridges into EngineInterop.cs. Added + Add Camera UI button and compiled the full matrix successfully.
+
+- **[2026-08-13] FINDING / DECISION:** Architect flagged 3 architectural violations: FFmpeg dependency for transcoding, Chromium CEF for browser cues, and community wrappers for DeckLink.
+  - **IMPACT:** Violations break Zero Dependency, Zero-Blocking, and raw FFI constraints.
+  - **RESOLUTION:** Flagged items in BUILD_PLAN.md with Architect comments. Scheduled to implement native WMF Transcode Topology, ICoreWebView2 COM ingestion, and raw C-compatible FFI DeckLink bindings.
+
+- **[2026-08-14] FINDING / DECISION:** VRAM Parameter injection complete (Crop, Pan/Zoom, Color).
+  - **IMPACT:** Lock-free state synchronization achieved from C# sliders down to DX11 Constant Buffer, bypassing CPU rendering locks. `BlendData` struct confirmed 16-byte aligned.
+  - **RESOLUTION:** Removed rwlock in `graphics.rs`, routed via crossbeam `EngineCommand`, added FFI endpoints, added sliders to C# UI, compiled Rust and C# layers seamlessly. System remains thermodynamically stable.
+
+- **[2026-08-15] FINDING / DECISION:** Diagnosed the "White Screen / Stale RTV" thermodynamic flaw. The DXGI FLIP_DISCARD model physically rotates the backbuffer, meaning the static `master_rtv` pointer became orphaned on window resize or DWM flips, resulting in uninitialized VRAM. Furthermore, the `PS_CODE` Pixel Shader was requesting an 8-bit texture while the Compute Shader outputted a 16-bit Float UAV, causing D3D11 to drop the draw call entirely.
+  - **IMPACT:** A completely white, unresponsive video canvas upon playback of 10-bit P010 media.
+  - **RESOLUTION:** Executed Phase 12b (Dynamic RTV Lock & HDR Shader Handshake). `render_composited` now dynamically extracts and locks the active backbuffer into a fresh RTV every single frame. The HLSL Pixel Shader was upgraded to `Texture2D<float4>` to flawlessly ingest the 16-bit Float payload, with neutral color grading math (0.0). Added explicit `DXGI_ERROR` telemetry logging on the `Present` boundary.

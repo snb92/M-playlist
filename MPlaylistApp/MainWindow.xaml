@@ -85,6 +85,36 @@
                         <TextBlock x:Name="LblBRY" Grid.Row="3" Grid.Column="5" Text="-1.00" Foreground="Gray" Margin="5,0,15,0"/>
                     </Grid>
                 </StackPanel>
+
+                <StackPanel Margin="30,0,0,0">
+                    <TextBlock Text="Transform &amp; Color" Foreground="Gray" FontWeight="Bold" Margin="0,0,0,5"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/><ColumnDefinition Width="60"/><ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/><ColumnDefinition Width="60"/><ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+                        </Grid.RowDefinitions>
+                        <!-- Crop -->
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Crop L" Foreground="Gray" Margin="0,0,5,0"/>
+                        <Slider x:Name="SliderCropL" Grid.Row="0" Grid.Column="1" Minimum="0" Maximum="1" Value="0" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCropSliderChanged"/>
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Crop R" Foreground="Gray" Margin="0,0,5,0"/>
+                        <Slider x:Name="SliderCropR" Grid.Row="1" Grid.Column="1" Minimum="0" Maximum="1" Value="0" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnCropSliderChanged"/>
+                        <!-- Pan Zoom -->
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Pan X" Foreground="Gray" Margin="0,0,5,0"/>
+                        <Slider x:Name="SliderPanX" Grid.Row="2" Grid.Column="1" Minimum="-1" Maximum="1" Value="0" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnPanZoomSliderChanged"/>
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Zoom" Foreground="Gray" Margin="0,0,5,0"/>
+                        <Slider x:Name="SliderZoom" Grid.Row="3" Grid.Column="1" Minimum="0.1" Maximum="5" Value="1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnPanZoomSliderChanged"/>
+                        <!-- Color -->
+                        <TextBlock Grid.Row="0" Grid.Column="3" Text="Bright" Foreground="Gray" Margin="10,0,5,0"/>
+                        <Slider x:Name="SliderBright" Grid.Row="0" Grid.Column="4" Minimum="-1" Maximum="1" Value="0" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnColorSliderChanged"/>
+                        <TextBlock Grid.Row="1" Grid.Column="3" Text="Contrst" Foreground="Gray" Margin="10,0,5,0"/>
+                        <Slider x:Name="SliderContrast" Grid.Row="1" Grid.Column="4" Minimum="0" Maximum="3" Value="1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnColorSliderChanged"/>
+                        <TextBlock Grid.Row="2" Grid.Column="3" Text="Saturat" Foreground="Gray" Margin="10,0,5,0"/>
+                        <Slider x:Name="SliderSat" Grid.Row="2" Grid.Column="4" Minimum="0" Maximum="3" Value="1" TickFrequency="0.01" IsSnapToTickEnabled="True" ValueChanged="OnColorSliderChanged"/>
+                    </Grid>
+                </StackPanel>
             </StackPanel>
         </Expander>
 
@@ -145,7 +175,10 @@
                     </ListView.ItemTemplate>
                 </ListView>
                 
-                <Button Grid.Row="2" Background="#333" Click="OnAddCueClicked" Content="+ Add Cues" Foreground="White" Height="40" HorizontalAlignment="Left" Width="100"/>
+                <StackPanel Grid.Row="2" Orientation="Horizontal">
+                    <Button Background="#333" Click="OnAddCueClicked" Content="+ Add Cues" Foreground="White" Height="40" Width="100" Margin="0,0,10,0"/>
+                    <Button Background="#333" Click="AddLocalCamera_Click" Content="+ Add Camera" Foreground="White" Height="40" Width="100"/>
+                </StackPanel>
             </Grid>
 
             <!-- CENTER: Viewport & Transport -->

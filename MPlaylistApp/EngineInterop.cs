@@ -12,7 +12,7 @@ namespace MPlaylistApp
         public byte IsLooping;
         public byte HoldLastFrame;
         public long TransitionDurationHnsecs;
-        public byte IsStaticImage;
+        public byte Modality;
     }
 
     public static class EngineInterop
@@ -21,6 +21,9 @@ namespace MPlaylistApp
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern bool mplaylist_init();
+
+        [System.Runtime.InteropServices.DllImport("m_playlist.dll", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        public static extern bool mplaylist_check_device_lost();
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void mplaylist_shutdown();
@@ -40,8 +43,6 @@ namespace MPlaylistApp
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern bool mplaylist_set_window(IntPtr hwnd);
 
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
-        public static extern bool mplaylist_load_image([MarshalAs(UnmanagedType.LPWStr)] string filePath);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern bool mplaylist_load_cue(FfiCue cue);
@@ -59,7 +60,7 @@ namespace MPlaylistApp
                     IsLooping = (byte)(model.IsLooping ? 1 : 0),
                     HoldLastFrame = (byte)(model.HoldLastFrame ? 1 : 0),
                     TransitionDurationHnsecs = (long)(model.TransitionDuration * 10000000.0),
-                    IsStaticImage = (byte)(model.IsStaticImage ? 1 : 0)
+                    Modality = (byte)model.Modality
                 };
                 mplaylist_load_cue(ffiCue);
             }
@@ -99,7 +100,31 @@ namespace MPlaylistApp
         }
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        public static extern bool mplaylist_fire_cue(uint cue_index, uint transition_ms, long in_point_hnsecs, long out_point_hnsecs);
+        public static extern uint mplaylist_get_camera_device_count();
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern uint mplaylist_get_camera_device_name(uint index, IntPtr buffer, uint max_len);
+
+        public static System.Collections.Generic.List<string> GetVideoDevices()
+        {
+            var devices = new System.Collections.Generic.List<string>();
+            uint count = mplaylist_get_camera_device_count();
+            for (uint i = 0; i < count; i++)
+            {
+                byte[] buffer = new byte[256];
+                GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+                try
+                {
+                    uint bytesWritten = mplaylist_get_camera_device_name(i, handle.AddrOfPinnedObject(), 256);
+                    devices.Add(bytesWritten > 0 ? System.Text.Encoding.UTF8.GetString(buffer, 0, (int)bytesWritten) : $"Unknown Camera {i}");
+                }
+                finally { handle.Free(); }
+            }
+            return devices;
+        }
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern bool mplaylist_fire_cue(FfiCue cue);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern uint mplaylist_get_audio_device_count();
@@ -148,11 +173,13 @@ namespace MPlaylistApp
 
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        public static extern void mplaylist_set_spatial_color(
-            float crop_left, float crop_top, float crop_right, float crop_bottom,
-            float pan_x, float pan_y, float zoom,
-            float brightness, float contrast, float saturation
-        );
+        public static extern void mplaylist_set_crop(float left, float top, float right, float bottom);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void mplaylist_set_pan_zoom(float pan_x, float pan_y, float zoom);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void mplaylist_set_color(float brightness, float contrast, float saturation);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern bool mplaylist_bind_output_matrix(IntPtr hwnd);

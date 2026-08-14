@@ -57,35 +57,44 @@ Before we output the signal to secondary monitors, the internal visual compositi
 ## 🟢 TIER 3: TOPOLOGICAL OUTPUT (Projecting the Signal)
 The internal engine is now mathematically and visually complete. It is time to externalize it to physical hardware.
 
-### Phase 11: Physical Playout Matrix
-**The Mission:** Spawning hardware-accelerated Win32 windows on secondary physical monitors.
-- [ ] Multi-Display Output routing
+### Phase 11: Static Asset Polymorphism & C-ABI
+**The Mission:** Routing static textures alongside dynamic video with zero-copy efficiency.
+- [x] The Static Asset Pipeline (WIC to DX11 Integration)
+- [x] Static Asset Polymorphism & C# Routing
+- [x] The Pure State Realignment (C-ABI Modality Enforcement)
+
+### Phase 12: Topological Output & Clean Feed
+**The Mission:** Spawning hardware-accelerated Win32 windows and maintaining immutable swapchains for broadcast.
+- [x] Immutable 1080p Swapchain & Direct2D Typography
+- [x] Topological Output & Clean Feed routing
 - [ ] Borderless fullscreen mapping across Windows OS monitor topologies
 - [ ] Checkerboard Alpha Previews in WPF
-- [ ] 10-Bit HDR Compute Shader conversion
+- [x] 10-Bit HDR Compute Shader conversion
 
 ## 🔵 TIER 4: THE MITTI-KILLERS (Advanced Sync & Integrations)
 The commercial-grade foundation is hermetically sealed. We now ingest external triggers, chaotic I/O, and automate the workflow.
 
-### Phase 12: External Sync & Control Networks
+### Phase 13: External Control & Network State
 **The Mission:** Slaving the M-Playlist engine to external show-control protocols.
+- [x] Phase 13a: OSC State Injection (C# UDP Listener & EngineConductor API)
 - [ ] Network Sync (MTC/LTC master/follower)
 - [ ] MIDI & DMX (Art-Net/sACN) triggers
-- [ ] NDI Tally integration
 - [ ] ATEM Switcher TCP/UDP integration
+- [ ] NDI Tally integration
 - [ ] HyperDeck emulation
 
-### Phase 13: Specialized Ingestion (Live Inputs)
+### Phase 14: Specialized Ingestion (Live Inputs & NDI)
 **The Mission:** Opening the engine to real-time, non-standard media streams.
-- [ ] Live Cameras (UVC/DirectShow)
-- [ ] Blackmagic DeckLink SDK (SDI In/Out with Key & Fill)
-- [ ] NDI & Syphon Receivers
-- [ ] Browser Cues (Chromium CEF)
-- [ ] Desktop Capture
+- [x] Phase 14a: NDI Ingestion (Structural Primitive & Receiver FFI)
+- [x] Phase 14b: NDI Ingestion (VRAM Blasting & Transition Lock)
+- [x] Phase 14c: Local Hardware Ingestion (UVC/Capture Cards)
+- [ ] Blackmagic DeckLink SDK (SDI In/Out with Key & Fill) <!-- ARCHITECT FLAG: No community wrappers. Use raw C-compatible FFI bindings only. -->
+- [ ] Browser Cues (Chromium CEF) <!-- ARCHITECT FLAG: CEF prohibited. Use pure Win32 COM ICoreWebView2 (Edge WebView2) mapped to DX11 shared surface. -->
+- [ ] Desktop Capture (DXGI Desktop Duplication)
 
-### Phase 14: Workflow Automations (The Studio Tools)
+### Phase 15: Workflow Automations (The Studio Tools)
 **The Mission:** High-value quality-of-life features executed entirely outside the real-time rendering loop.
 - [ ] Automagic File Tracking (FileSystemWatcher)
 - [ ] Offline Audio Normalization (LUFS scanning)
 - [ ] "Bundle Playlist" packaging tool
-- [ ] Background FFmpeg Transcoding
+- [ ] Background FFmpeg Transcoding <!-- ARCHITECT FLAG: FFmpeg prohibited. Use native WMF Transcode Topology (IMFSourceReader to IMFSinkWriter). -->

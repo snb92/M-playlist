@@ -11,7 +11,20 @@ namespace MPlaylistApp
 {
     public partial class MainWindow : Window
     {
+        [Flags]
+        public enum EXECUTION_STATE : uint
+        {
+            ES_AWAYMODE_REQUIRED = 0x00000040,
+            ES_CONTINUOUS = 0x80000000,
+            ES_DISPLAY_REQUIRED = 0x00000002,
+            ES_SYSTEM_REQUIRED = 0x00000001
+        }
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto, SetLastError = true)]
+        private static extern EXECUTION_STATE SetThreadExecutionState(EXECUTION_STATE esFlags);
+
         private DispatcherTimer? _uiTimer;
+        private DisplayMatrix _outputMatrix;
         private EngineConductor _conductor;
         private bool _isUserScrubbing = false;
         private ObservableCollection<MediaCue> _playlist = new ObservableCollection<MediaCue>();
@@ -71,6 +84,8 @@ namespace MPlaylistApp
                 AudioDeviceCombo.SelectedIndex = 0;
 
             // 1. Boot the Rust Master Clock
+            // Assert OS Execution Lock (Mathematically prevent WDDM Sleep/Display Off)
+            SetThreadExecutionState(EXECUTION_STATE.ES_CONTINUOUS | EXECUTION_STATE.ES_DISPLAY_REQUIRED | EXECUTION_STATE.ES_SYSTEM_REQUIRED);
             if (EngineInterop.mplaylist_init())
             {
                 // 2. Pass the RAW child window handle to DXGI
@@ -90,6 +105,13 @@ namespace MPlaylistApp
                     _uiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
                     _uiTimer.Tick += (s, args) =>
                     {
+                        if (EngineInterop.mplaylist_check_device_lost())
+                        {
+                            // A catastrophic TDR event occurred. 
+                            // Log the physics failure. Do NOT attempt automatic resurrection yet.
+                            System.Diagnostics.Debug.WriteLine("CRITICAL HARDWARE FAULT: DXGI_ERROR_DEVICE_REMOVED detected. VRAM Pipeline Severed.");
+                        }
+
                         double audioTime = _conductor.CurrentAudioTime;
                         double videoTime = _conductor.CurrentVideoTime;
                         
@@ -166,6 +188,34 @@ namespace MPlaylistApp
                 
                 // FORCE an initial resize now that DXGI is bound!
                 TriggerVideoResize();
+                ActivateCleanFeed();
+            }
+        }
+
+        private void ActivateCleanFeed()
+        {
+            var screens = System.Windows.Forms.Screen.AllScreens;
+            if (screens.Length < 2)
+            {
+                System.Diagnostics.Debug.WriteLine("TOPOLOGY TELEMETRY: No secondary monitor detected. Clean Feed Output dormant.");
+                return;
+            }
+
+            // Mathematically isolate the first secondary physical display
+            var targetScreen = screens.FirstOrDefault(s => !s.Primary) ?? screens[1];
+            var bounds = targetScreen.Bounds;
+
+            // Instantiate the pure Win32 uncomposited surface
+            _outputMatrix = new DisplayMatrix(bounds.X, bounds.Y, bounds.Width, bounds.Height);
+            
+            // Pipe the raw HWND across the C-ABI boundary into the DX11 Render Loop.
+            if (EngineInterop.mplaylist_bind_output_matrix(_outputMatrix.Handle))
+            {
+                System.Diagnostics.Debug.WriteLine($"PIPELINE SYNC: Clean Feed Swapchain mathematically bound to {targetScreen.DeviceName}.");
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine("PIPELINE FAULT: FFI rejected the Clean Feed HWND.");
             }
         }
 
@@ -260,14 +310,15 @@ namespace MPlaylistApp
             var cue = new MediaCue { FilePath = $"ndi://{System.Environment.MachineName} (Test Pattern)", Title = "NDI Test Pattern" };
             _playlist.Add(cue);
             _conductor.UpdatePlaylistTopology(_playlist);
-            
-            // Use the vestigial WinForms reference you already have to discover screens
-            var screens = System.Windows.Forms.Screen.AllScreens;
-            if (screens.Length > 1) {
-                // Target the secondary physical monitor (Index 1)
-                var target = screens[1].Bounds;
-                IntPtr targetHwnd = DisplayMatrix.SpawnBorderlessWindow(target.X, target.Y, target.Width, target.Height);
-                EngineInterop.mplaylist_bind_output_matrix(targetHwnd);
+        }
+
+        private void AddLocalCamera_Click(object sender, RoutedEventArgs e)
+        {
+            var cameras = EngineInterop.GetVideoDevices();
+            if (cameras.Count > 0)
+            {
+                _playlist.Add(new MediaCue { FilePath = $"camera://0", Title = $"[LIVE] {cameras[0]}", EndBehavior = EndBehavior.Stop });
+                _conductor.UpdatePlaylistTopology(_playlist);
             }
         }
 
@@ -314,6 +365,12 @@ namespace MPlaylistApp
 
         protected override void OnClosed(EventArgs e)
         {
+            SetThreadExecutionState(EXECUTION_STATE.ES_CONTINUOUS);
+            if (_outputMatrix != null)
+            {
+                _outputMatrix.Dispose();
+                _outputMatrix = null;
+            }
             base.OnClosed(e);
             System.Environment.Exit(0);
         }
@@ -397,6 +454,31 @@ namespace MPlaylistApp
                 (float)SliderTRX.Value, (float)SliderTRY.Value,
                 (float)SliderBLX.Value, (float)SliderBLY.Value,
                 (float)SliderBRX.Value, (float)SliderBRY.Value
+            );
+        }
+
+        private void OnCropSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (!IsLoaded) return;
+            EngineInterop.mplaylist_set_crop(
+                (float)SliderCropL.Value, (float)SliderCropR.Value,
+                0f, 0f // No UI for top/bottom yet, passing 0
+            );
+        }
+
+        private void OnPanZoomSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (!IsLoaded) return;
+            EngineInterop.mplaylist_set_pan_zoom(
+                (float)SliderPanX.Value, 0f, (float)SliderZoom.Value
+            );
+        }
+
+        private void OnColorSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (!IsLoaded) return;
+            EngineInterop.mplaylist_set_color(
+                (float)SliderBright.Value, (float)SliderContrast.Value, (float)SliderSat.Value
             );
         }
 

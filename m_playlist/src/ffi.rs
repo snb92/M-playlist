@@ -1,5 +1,8 @@
 use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::AtomicBool;
+
+pub static DEVICE_LOST_FLAG: AtomicBool = AtomicBool::new(false);
 
 // Global offset stored in microseconds. Default: 80ms (80,000 us)
 pub static SYNC_OFFSET_US: AtomicI64 = AtomicI64::new(80_000);
@@ -12,7 +15,7 @@ use crate::audio_ring::AudioRingBuffer;
 use crate::audio_wasapi::WasapiEngine;
 use crate::clock::MasterClock;
 use crate::graphics::Dx11Compositor;
-use crate::app_logic::{AppLogic, EngineCommand, EngineCue};
+use crate::app_logic::{AppLogic, EngineCommand};
 
 #[repr(C)]
 pub struct FfiCue {
@@ -127,26 +130,16 @@ pub extern "C" fn mplaylist_set_window(hwnd_ptr: *mut std::ffi::c_void) -> bool 
 
 #[no_mangle]
 pub extern "C" fn mplaylist_load_cue(cue: FfiCue) -> bool {
-    if cue.filepath.is_null() { return false; }
-    
-    let path_str = unsafe { std::ffi::CStr::from_ptr(cue.filepath) }
-        .to_string_lossy()
-        .into_owned();
-
-    let engine_cue = EngineCue {
-        filepath: path_str,
-        in_point_hnsecs: cue.in_point_hnsecs,
-        out_point_hnsecs: cue.out_point_hnsecs,
-        is_looping: cue.is_looping != 0,
-        hold_last_frame: cue.hold_last_frame != 0,
-        transition_duration_hnsecs: cue.transition_duration_hnsecs,
-        modality: cue.modality,
+    let filepath = if cue.filepath.is_null() { String::new() } else { unsafe { std::ffi::CStr::from_ptr(cue.filepath).to_string_lossy().into_owned() } };
+    let owned_cue = crate::app_logic::OwnedCue {
+        filepath, in_point_hnsecs: cue.in_point_hnsecs, out_point_hnsecs: cue.out_point_hnsecs,
+        is_looping: cue.is_looping, hold_last_frame: cue.hold_last_frame, transition_duration_hnsecs: cue.transition_duration_hnsecs, modality: cue.modality,
     };
-
-    let state = get_state().lock().unwrap();
-    if let Some(logic) = state.app_logic.as_ref() {
-        let _ = logic.tx.send(EngineCommand::LoadCue(engine_cue));
-        return true;
+    if let Ok(state) = get_state().lock() {
+        if let Some(logic) = state.app_logic.as_ref() {
+            let _ = logic.tx.send(crate::app_logic::EngineCommand::LoadCue(owned_cue));
+            return true;
+        }
     }
     false
 }
@@ -367,22 +360,26 @@ pub extern "C" fn mplaylist_set_audio_route(deck_id: i32, in_ch: i32, out_bus: i
 }
 
 #[no_mangle]
-pub extern "C" fn mplaylist_set_spatial_color(
-    crop_left: f32, crop_top: f32, crop_right: f32, crop_bottom: f32,
-    pan_x: f32, pan_y: f32, zoom: f32,
-    brightness: f32, contrast: f32, saturation: f32
-) {
-    if let Ok(mut state) = crate::graphics::SPATIAL_COLOR_STATE.write() {
-        state.crop_left = crop_left;
-        state.crop_top = crop_top;
-        state.crop_right = crop_right;
-        state.crop_bottom = crop_bottom;
-        state.pan_x = pan_x;
-        state.pan_y = pan_y;
-        state.zoom = zoom;
-        state.brightness = brightness;
-        state.contrast = contrast;
-        state.saturation = saturation;
+pub extern "C" fn mplaylist_set_crop(left: f32, top: f32, right: f32, bottom: f32) {
+    let state = get_state().lock().unwrap();
+    if let Some(logic) = state.app_logic.as_ref() {
+        let _ = logic.tx.send(crate::app_logic::EngineCommand::SetCrop { left, top, right, bottom });
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn mplaylist_set_pan_zoom(pan_x: f32, pan_y: f32, zoom: f32) {
+    let state = get_state().lock().unwrap();
+    if let Some(logic) = state.app_logic.as_ref() {
+        let _ = logic.tx.send(crate::app_logic::EngineCommand::SetPanZoom { pan_x, pan_y, zoom });
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn mplaylist_set_color(brightness: f32, contrast: f32, saturation: f32) {
+    let state = get_state().lock().unwrap();
+    if let Some(logic) = state.app_logic.as_ref() {
+        let _ = logic.tx.send(crate::app_logic::EngineCommand::SetColor { brightness, contrast, saturation });
     }
 }
 
@@ -439,4 +436,9 @@ pub extern "C" fn mplaylist_bind_output_matrix(hwnd: *mut std::ffi::c_void) -> b
         }
     }
     false
+}
+
+#[no_mangle]
+pub extern "C" fn mplaylist_check_device_lost() -> bool {
+    DEVICE_LOST_FLAG.swap(false, Ordering::Acquire)
 }

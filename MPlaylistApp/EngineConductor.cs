@@ -130,7 +130,7 @@ namespace MPlaylistApp
                         ulong currentPlayheadHNS = (ulong)(CurrentVideoTime * 10000000.0);
 
                         // Modality 1: Static Image (Infinite Time)
-                        if (_activeCue.IsStaticImage || _activeCue.OutPointHNS == 0)
+                        if (_activeCue.Modality == CueModality.WICStatic || _activeCue.OutPointHNS == 0)
                         {
                             // We have infinite time, so pre-load the next cue immediately.
                             if (!_bDeckLoaded)
@@ -212,31 +212,24 @@ namespace MPlaylistApp
 
         private void LoadPolymorphicCue(MediaCue targetCue)
         {
-            if (targetCue.IsStaticImage)
+            IntPtr ptr = Marshal.StringToCoTaskMemUTF8(targetCue.FilePath ?? string.Empty);
+            try
             {
-                // 1. Static Modality: Route via pure WIC FFI (Rust auto-routes to standby deck)
-                EngineInterop.mplaylist_load_image(targetCue.FilePath); 
+                var ffiCue = new FfiCue 
+                { 
+                    FilePath = ptr,
+                    InPointHnsecs = (long)targetCue.InPointHNS,
+                    OutPointHnsecs = (long)targetCue.OutPointHNS,
+                    IsLooping = (byte)(targetCue.EndBehavior == EndBehavior.LoopForever ? 1 : 0),
+                    HoldLastFrame = 1,
+                    TransitionDurationHnsecs = (long)(targetCue.TransitionMs * 10000.0),
+                    Modality = (byte)targetCue.Modality 
+                };
+                
+                // ONE UNIFIED ENDPOINT FOR ALL ASSETS
+                EngineInterop.mplaylist_load_cue(ffiCue); 
             }
-            else
-            {
-                // 2. Temporal Modality: Route via WMF FFI
-                IntPtr ptr = Marshal.StringToCoTaskMemUTF8(targetCue.FilePath);
-                try
-                {
-                    var ffiCue = new FfiCue 
-                    { 
-                        FilePath = ptr,
-                        InPointHnsecs = (long)targetCue.InPointHNS,
-                        OutPointHnsecs = (long)targetCue.OutPointHNS,
-                        IsLooping = (byte)(targetCue.EndBehavior == EndBehavior.LoopForever ? 1 : 0),
-                        HoldLastFrame = 1,
-                        TransitionDurationHnsecs = targetCue.TransitionMs * 10000,
-                        IsStaticImage = (byte)(targetCue.IsStaticImage ? 1 : 0)
-                    };
-                    EngineInterop.mplaylist_load_cue(ffiCue); 
-                }
-                finally { Marshal.FreeCoTaskMem(ptr); }
-            }
+            finally { Marshal.FreeCoTaskMem(ptr); }
         }
 
         private void ResolveNextCue()
@@ -276,11 +269,25 @@ namespace MPlaylistApp
                 {
                     int targetIndex = _playlistOrder.IndexOf(_nextCue);
                     
-                    uint transMs = _nextCue.TransitionMs; // <--- NO MORE HARD CUTS
-                    long inHnsecs = (long)_nextCue.InPointHNS;
-                    long outHnsecs = (long)_nextCue.OutPointHNS;
-
-                    EngineInterop.mplaylist_fire_cue((uint)targetIndex, transMs, inHnsecs, outHnsecs);
+                    IntPtr ptr = Marshal.StringToCoTaskMemUTF8(_nextCue.FilePath ?? string.Empty);
+                    try
+                    {
+                        var ffiCue = new FfiCue
+                        {
+                            FilePath = ptr,
+                            InPointHnsecs = (long)_nextCue.InPointHNS,
+                            OutPointHnsecs = (long)_nextCue.OutPointHNS,
+                            IsLooping = (byte)(_nextCue.EndBehavior == EndBehavior.LoopForever ? 1 : 0),
+                            HoldLastFrame = 1,
+                            TransitionDurationHnsecs = (long)(_nextCue.TransitionMs * 10000.0),
+                            Modality = (byte)_nextCue.Modality
+                        };
+                        EngineInterop.mplaylist_fire_cue(ffiCue);
+                    }
+                    finally
+                    {
+                        Marshal.FreeCoTaskMem(ptr);
+                    }
                     EngineInterop.mplaylist_set_volume_db((float)_nextCue.VolumeDb);
 
                     if (_activeCue != null) _activeCue.CurrentLoopCount = 0; // reset loop count
@@ -300,6 +307,50 @@ namespace MPlaylistApp
                 if (_activeCue != null) _activeCue.IsActivePlaying = false;
                 _activeCue = null;
                 _bDeckLoaded = false;
+            }
+        }
+
+        public void TransportPlay()
+        {
+            EngineInterop.mplaylist_resume();
+        }
+
+        public void TransportPause()
+        {
+            EngineInterop.mplaylist_pause();
+        }
+
+        public void TransportStop()
+        {
+            EngineInterop.mplaylist_stop();
+            lock (_playlistLock)
+            {
+                if (_activeCue != null) _activeCue.IsActivePlaying = false;
+                _activeCue = null;
+                _bDeckLoaded = false;
+                _nextCue = null;
+                _isTransitioning = false;
+            }
+        }
+
+        public void TransportFireNext()
+        {
+            lock (_playlistLock)
+            {
+                ResolveNextCue();
+                FireNextCue();
+            }
+        }
+
+        public void TransportJumpToCue(int index)
+        {
+            lock (_playlistLock)
+            {
+                if (index >= 0 && index < _playlistOrder.Count)
+                {
+                    _nextCue = _playlistOrder[index];
+                    FireNextCue();
+                }
             }
         }
     }

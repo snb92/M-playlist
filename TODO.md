@@ -70,3 +70,7 @@
   - [x] Phase 14a.2: The Muscle Lobotomy (Eradicate static cues array, pass FfiCue dynamic payload)
   - [x] Phase 14b: NDI Ingestion (Lock-Free Receiver Thread & VRAM Blasting)
   - [x] Phase 14b.2: The Transition Lock (Insulate Rust engine from C# lookahead during crossfades)
+  - [x] Phase 14b.3: Polymorphic Unification (Unify asset loading endpoints through mplaylist_load_cue)
+
+- [x] Phase 14c: Local Hardware Ingestion (UVC/Capture Cards)
+

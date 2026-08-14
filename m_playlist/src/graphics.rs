@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, AtomicBool};
 use std::sync::{Mutex, mpsc::SyncSender, RwLock};
+use crate::ffi::DEVICE_LOST_FLAG;
 
 pub static SHOW_OVERLAY: AtomicBool = AtomicBool::new(false);
 pub static OVERLAY_TEXT: RwLock<Vec<u16>> = RwLock::new(Vec::new());
@@ -35,7 +36,7 @@ pub static SPATIAL_COLOR_STATE: RwLock<SpatialColorState> = RwLock::new(SpatialC
 });
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Direct3D::{
-    D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_1, ID3DBlob, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+    D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_1, ID3DBlob,
     D3D_SRV_DIMENSION_TEXTURE2D, D3D_SRV_DIMENSION_TEXTURE2DARRAY,
 };
 use windows::Win32::Graphics::Direct3D::Fxc::D3DCompile;
@@ -48,7 +49,7 @@ use windows::Win32::Graphics::Direct3D11::{
     D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_USAGE_DYNAMIC,
     ID3D11Buffer, ID3D11Device, ID3D11DeviceContext, ID3D11Multithread,
     ID3D11PixelShader, ID3D11Resource, ID3D11SamplerState, ID3D11ShaderResourceView,
-    ID3D11Texture2D, ID3D11VertexShader,
+    ID3D11Texture2D, ID3D11VertexShader, ID3D11ComputeShader, ID3D11UnorderedAccessView
 };
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
@@ -70,11 +71,12 @@ VS_OUT VS_Main(uint id : SV_VertexID) {
 }
 \0";
 
-pub const PS_CODE: &[u8] = b"
-struct VS_OUT { float4 pos : SV_POSITION; float2 uv : TEXCOORD; };
-Texture2D texA : register(t0);
-Texture2D texB : register(t1);
+const PS_CODE: &str = r#"
+struct PS_INPUT { float4 pos : SV_POSITION; float2 uv : TEXCOORD; };
+Texture2D<float4> texA : register(t0);
+Texture2D<float4> texB : register(t1);
 SamplerState smp : register(s0);
+
 cbuffer BlendBuffer : register(b0) { 
     float blendFactor; float aspectA; float aspectB; float aspectOut; 
     float4x4 invHomography;
@@ -83,50 +85,70 @@ cbuffer BlendBuffer : register(b0) {
     float brightness; float contrast; float saturation; float _pad1;
 };
 
-float2 FitAspect(float2 uv, float texAspect, float outAspect) {
-    if (texAspect <= 0.01 || outAspect <= 0.01) return uv;
-    float scaleX = 1.0;
-    float scaleY = 1.0;
-    if (texAspect > outAspect) {
-        scaleY = outAspect / texAspect;
-    } else {
-        scaleX = texAspect / outAspect;
-    }
-    return float2((uv.x - 0.5) / scaleX + 0.5, (uv.y - 0.5) / scaleY + 0.5);
-}
+float4 PS_Main(PS_INPUT input) : SV_TARGET {
+    float2 uv = input.uv;
+    uv -= float2(0.5, 0.5);
+    uv /= (zoom == 0.0 ? 1.0 : zoom);
+    uv += float2(0.5, 0.5);
+    uv -= float2(panX, -panY);
 
-float4 PS_Main(VS_OUT input) : SV_TARGET {
-    // 1. Multiply the screen UV by the inverse 3D matrix
-    float3 uvw = mul(float3(input.uv, 1.0), (float3x3)invHomography);
+    float3 warped = mul(invHomography, float3(uv, 1.0));
+    float2 final_uv = warped.xy / warped.z;
+
+    float2 uvA = final_uv;
+    float2 uvB = final_uv;
+    if (aspectA > aspectOut) { uvA.y = (uvA.y - 0.5) * (aspectOut / aspectA) + 0.5; } 
+    else { uvA.x = (uvA.x - 0.5) * (aspectA / aspectOut) + 0.5; }
     
-    // 2. Perform the true Perspective Divide
-    float2 final_uv = uvw.xy / uvw.z;
+    if (aspectB > aspectOut) { uvB.y = (uvB.y - 0.5) * (aspectOut / aspectB) + 0.5; } 
+    else { uvB.x = (uvB.x - 0.5) * (aspectB / aspectOut) + 0.5; }
+
+    float4 colorA = texA.Sample(smp, uvA);
+    float4 colorB = texB.Sample(smp, uvB);
+
+    if (uvA.x < cropLeft || uvA.x > (1.0 - cropRight) || uvA.y < cropTop || uvA.y > (1.0 - cropBottom)) colorA = float4(0,0,0,0);
+    if (uvB.x < cropLeft || uvB.x > (1.0 - cropRight) || uvB.y < cropTop || uvB.y > (1.0 - cropBottom)) colorB = float4(0,0,0,0);
+
+    float4 finalColor = lerp(colorA, colorB, blendFactor);
+
+    // Neutral Color Grading (0.0 = no change)
+    finalColor.rgb *= (brightness + 1.0);
+    finalColor.rgb = (finalColor.rgb - 0.5) * (contrast + 1.0) + 0.5;
     
-    // 3. Render black outside the bounds of the warped quad
-    final_uv = (final_uv - 0.5) / zoom + 0.5 - float2(panX, panY);
-    if (final_uv.x < cropLeft || final_uv.x > (1.0 - cropRight) || final_uv.y < cropTop || final_uv.y > (1.0 - cropBottom)) {
-        return float4(0, 0, 0, 1);
-    }
-    
-    float2 uvA = FitAspect(final_uv, aspectA, aspectOut);
-    float4 colorA = float4(0, 0, 0, 1);
-    if (uvA.x >= 0.0 && uvA.x <= 1.0 && uvA.y >= 0.0 && uvA.y <= 1.0) {
-        colorA = texA.Sample(smp, uvA);
-    }
-    
-    float2 uvB = FitAspect(final_uv, aspectB, aspectOut);
-    float4 colorB = float4(0, 0, 0, 1);
-    if (uvB.x >= 0.0 && uvB.x <= 1.0 && uvB.y >= 0.0 && uvB.y <= 1.0) {
-        colorB = texB.Sample(smp, uvB);
-    }
-    
-    float4 final_color = lerp(colorA, colorB, blendFactor);
-    final_color.rgb = (final_color.rgb - 0.5) * contrast + 0.5 + brightness;
-    float luma = dot(final_color.rgb, float3(0.299, 0.587, 0.114));
-    final_color.rgb = lerp(float3(luma, luma, luma), final_color.rgb, saturation);
-    return saturate(final_color);
+    float luminance = dot(finalColor.rgb, float3(0.2126, 0.7152, 0.0722));
+    finalColor.rgb = lerp(float3(luminance, luminance, luminance), finalColor.rgb, saturation + 1.0);
+
+    // Output HDR buffer clamped to SDR monitor
+    return float4(saturate(finalColor.rgb), finalColor.a);
 }
-\0";
+"#;
+
+const COMPUTE_SHADER_P010: &str = r#"
+Texture2D<float> LumaTex : register(t2);
+Texture2D<float2> ChromaTex : register(t3);
+RWTexture2D<float4> OutTex : register(u0);
+
+[numthreads(8, 8, 1)]
+void CSMain(uint3 tid : SV_DispatchThreadID) {
+    uint width, height;
+    OutTex.GetDimensions(width, height);
+    if (tid.x >= width || tid.y >= height) return;
+
+    float y = LumaTex[tid.xy].r;
+    float2 uv = ChromaTex[tid.xy / 2].rg;
+    
+    // BT.709 Mathematical Reconstruction (Video Range)
+    y = 1.164383 * (y - 0.062745);
+    float u = uv.r - 0.5;
+    float v = uv.g - 0.5;
+    
+    float r = y + 1.596027 * v;
+    float g = y - 0.391762 * u - 0.812968 * v;
+    float b = y + 2.017232 * u;
+    
+    OutTex[tid.xy] = float4(saturate(r), saturate(g), saturate(b), 1.0);
+}
+"#;
 
 #[repr(C, align(16))]
 #[derive(Debug, Clone, Copy)]
@@ -205,6 +227,16 @@ fn calculate_inverse_homography(geometry: &[[f32; 4]; 4]) -> [f32; 16] {
     ]
 }
 
+pub struct ComputeStaging {
+    pub planar_tex: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
+    pub uav_tex: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
+    pub uav_view: windows::Win32::Graphics::Direct3D11::ID3D11UnorderedAccessView,
+    pub srv_view: windows::Win32::Graphics::Direct3D11::ID3D11ShaderResourceView,
+    pub width: u32,
+    pub height: u32,
+    pub format: u32,
+}
+
 pub struct SendableSample(pub windows::Win32::Media::MediaFoundation::IMFSample);
 unsafe impl Send for SendableSample {}
 unsafe impl Sync for SendableSample {}
@@ -227,6 +259,9 @@ pub struct Dx11Compositor {
     pixel_shader: ID3D11PixelShader,
     sampler: ID3D11SamplerState,
     constant_buffer: ID3D11Buffer,
+    compute_shader: ID3D11ComputeShader,
+    pub compute_staging_a: std::sync::Mutex<Option<ComputeStaging>>,
+    pub compute_staging_b: std::sync::Mutex<Option<ComputeStaging>>,
     pub staging_a: Mutex<Option<(ID3D11Texture2D, u32, Option<SendableSample>)>>,
     pub staging_b: Mutex<Option<(ID3D11Texture2D, u32, Option<SendableSample>)>>,
     pub ndi_rx_a: std::sync::Arc<std::sync::Mutex<NdiPingPong>>,
@@ -365,6 +400,30 @@ impl Dx11Compositor {
             )?;
             let pixel_shader = pixel_shader_opt.unwrap();
 
+            let mut cs_blob_opt: Option<ID3DBlob> = None;
+            let mut cs_error_blob_opt: Option<ID3DBlob> = None;
+            let res = D3DCompile(
+                COMPUTE_SHADER_P010.as_ptr() as *const _, COMPUTE_SHADER_P010.len() - 1,
+                windows::core::s!("CSMain"), None, None,
+                windows::core::s!("CSMain"), windows::core::s!("cs_5_0"),
+                0, 0, &mut cs_blob_opt, Some(&mut cs_error_blob_opt),
+            );
+            if res.is_err() {
+                if let Some(err_blob) = cs_error_blob_opt {
+                    let err_str = unsafe { std::ffi::CStr::from_ptr(err_blob.GetBufferPointer() as *const i8).to_string_lossy() };
+                    panic!("CS Compile Error: {}", err_str);
+                } else { res?; }
+            }
+            let cs_blob = cs_blob_opt.unwrap();
+            let mut compute_shader_opt: Option<ID3D11ComputeShader> = None;
+            unsafe {
+                device.CreateComputeShader(
+                    std::slice::from_raw_parts(cs_blob.GetBufferPointer() as *const u8, cs_blob.GetBufferSize()),
+                    None, Some(&mut compute_shader_opt)
+                )?;
+            }
+            let compute_shader = compute_shader_opt.unwrap();
+
             let sampler_desc = D3D11_SAMPLER_DESC {
                 Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
                 AddressU: D3D11_TEXTURE_ADDRESS_CLAMP,
@@ -447,6 +506,9 @@ impl Dx11Compositor {
                 pixel_shader,
                 sampler,
                 constant_buffer,
+                compute_shader,
+                compute_staging_a: std::sync::Mutex::new(None),
+                compute_staging_b: std::sync::Mutex::new(None),
                 staging_a: Mutex::new(None),
                 staging_b: Mutex::new(None),
                 ndi_rx_a: std::sync::Arc::new(std::sync::Mutex::new(NdiPingPong { width: 0, height: 0, stride: 0, pixels: Vec::new(), is_dirty: false })),
@@ -492,78 +554,98 @@ impl Dx11Compositor {
         }
     }
 
-    pub fn render_composited(&self, blend_factor: f32, geometry: &[[f32; 4]; 4]) -> Result<()> {
+    pub fn render_composited(&self, blend_factor: f32, geometry: &[[f32; 4]; 4], crop: &[f32; 4], pan_zoom: &[f32; 3], color: &[f32; 3]) -> Result<()> {
+        // 1. FRAME ORIGIN: Dynamically lock the active DXGI Flip backbuffer
+        let current_rtv = unsafe {
+            let backbuffer: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D = self.swapchain.GetBuffer(0)?;
+            let backbuffer_res: windows::Win32::Graphics::Direct3D11::ID3D11Resource = backbuffer.cast()?;
+            let mut rtv_opt = None;
+            self.device.CreateRenderTargetView(&backbuffer_res, None, Some(&mut rtv_opt))?;
+            rtv_opt.unwrap()
+        };
+
         unsafe {
-            let backbuffer: ID3D11Texture2D = self.swapchain.GetBuffer(0)?;
             let current_w = 1920;
             let current_h = 1080;
 
-            // 1. Static 1080p Viewport & RTV Binding
             let viewport = windows::Win32::Graphics::Direct3D11::D3D11_VIEWPORT { 
                 TopLeftX: 0.0, TopLeftY: 0.0, Width: 1920.0, Height: 1080.0, MinDepth: 0.0, MaxDepth: 1.0 
             };
             self.context.RSSetViewports(Some(&[viewport]));
 
             let clear_color: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
-            self.context.ClearRenderTargetView(&self.master_rtv, &clear_color);
-            self.context.OMSetRenderTargets(Some(&[Some(self.master_rtv.clone())]), None);
-
+            self.context.ClearRenderTargetView(&current_rtv, &clear_color);
+            self.context.OMSetRenderTargets(Some(&[Some(current_rtv.clone())]), None);
 
             self.context.IASetPrimitiveTopology(windows::Win32::Graphics::Direct3D::D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             self.context.VSSetShader(&self.vertex_shader, None);
             self.context.PSSetShader(&self.pixel_shader, None);
             self.context.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
 
-            let mut process_ndi_rx = |rx_mutex: &std::sync::Mutex<NdiPingPong>, staging_mutex: &std::sync::Mutex<Option<(windows::Win32::Graphics::Direct3D11::ID3D11Texture2D, u32, Option<crate::graphics::SendableSample>)>>| {
+            let process_ndi_rx = |rx_mutex: &std::sync::Mutex<NdiPingPong>, staging_mutex: &std::sync::Mutex<Option<(windows::Win32::Graphics::Direct3D11::ID3D11Texture2D, u32, Option<crate::graphics::SendableSample>)>>| {
                 if let Ok(mut rx) = rx_mutex.lock() {
                     if rx.is_dirty && rx.width > 0 && rx.height > 0 {
-                        let mut lock = staging_mutex.lock().unwrap();
-                        let mut recreate = true;
-                        
                         // 1. Attempt zero-copy Map/Unmap if DYNAMIC texture already matches dimensions
-                        if let Some((tex, _, _)) = lock.as_ref() {
-                            let mut desc = windows::Win32::Graphics::Direct3D11::D3D11_TEXTURE2D_DESC::default();
-                            unsafe { tex.GetDesc(&mut desc) };
-                            if desc.Width == rx.width && desc.Height == rx.height && desc.Usage == windows::Win32::Graphics::Direct3D11::D3D11_USAGE_DYNAMIC {
-                                recreate = false;
-                                let mut mapped = windows::Win32::Graphics::Direct3D11::D3D11_MAPPED_SUBRESOURCE::default();
-                                if unsafe { self.context.Map(tex, 0, windows::Win32::Graphics::Direct3D11::D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped)) }.is_ok() {
-                                    unsafe {
-                                        let src_ptr = rx.pixels.as_ptr();
-                                        let dst_ptr = mapped.pData as *mut u8;
-                                        for y in 0..rx.height {
-                                            std::ptr::copy_nonoverlapping(
-                                                src_ptr.offset((y * rx.stride) as isize),
-                                                dst_ptr.offset((y * mapped.RowPitch) as isize),
-                                                (rx.width * 4) as usize,
-                                            );
-                                        }
-                                        self.context.Unmap(tex, 0);
-                                    }
+                        let mut can_map = false;
+                        if let Ok(staging_lock) = staging_mutex.lock() {
+                            if let Some((tex, _, _)) = staging_lock.as_ref() {
+                                let mut desc = windows::Win32::Graphics::Direct3D11::D3D11_TEXTURE2D_DESC::default();
+                                tex.GetDesc(&mut desc);
+                                if desc.Width == rx.width && desc.Height == rx.height && desc.Usage == windows::Win32::Graphics::Direct3D11::D3D11_USAGE_DYNAMIC {
+                                    can_map = true;
                                 }
                             }
                         }
-                        
-                        // 2. Allocate the Dynamic Texture once if missing
-                        if recreate {
-                            let desc = windows::Win32::Graphics::Direct3D11::D3D11_TEXTURE2D_DESC {
-                                Width: rx.width, Height: rx.height, MipLevels: 1, ArraySize: 1,
-                                Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM, // NDI BGRA
-                                SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                                Usage: windows::Win32::Graphics::Direct3D11::D3D11_USAGE_DYNAMIC,
-                                BindFlags: windows::Win32::Graphics::Direct3D11::D3D11_BIND_SHADER_RESOURCE.0 as u32,
-                                CPUAccessFlags: windows::Win32::Graphics::Direct3D11::D3D11_CPU_ACCESS_WRITE.0 as u32,
-                                ..Default::default()
-                            };
-                            let init_data = windows::Win32::Graphics::Direct3D11::D3D11_SUBRESOURCE_DATA {
-                                pSysMem: rx.pixels.as_ptr() as *const _, SysMemPitch: rx.stride, SysMemSlicePitch: rx.stride * rx.height,
-                            };
-                            let mut texture = None;
-                            if unsafe { self.device.CreateTexture2D(&desc, Some(&init_data), Some(&mut texture)) }.is_ok() {
-                                *lock = Some((texture.unwrap(), 0, None));
+
+                        if can_map {
+                            if let Ok(staging_lock) = staging_mutex.lock() {
+                                let tex = &staging_lock.as_ref().unwrap().0;
+                                let mut mapped = windows::Win32::Graphics::Direct3D11::D3D11_MAPPED_SUBRESOURCE::default();
+                                if self.context.Map(tex, 0, windows::Win32::Graphics::Direct3D11::D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped)).is_ok() {
+                                    let src_pitch = (rx.width * 4) as usize;
+                                    let src_ptr = rx.pixels.as_ptr();
+                                    let dst_ptr = mapped.pData as *mut u8;
+                                    
+                                    for y in 0..rx.height {
+                                        std::ptr::copy_nonoverlapping(
+                                            src_ptr.offset((y as usize * src_pitch) as isize),
+                                            dst_ptr.offset((y * mapped.RowPitch) as isize),
+                                            src_pitch
+                                        );
+                                    }
+                                    self.context.Unmap(tex, 0);
+                                    rx.is_dirty = false;
+                                    return;
+                                }
                             }
                         }
-                        rx.is_dirty = false;
+
+                        // 2. Fallback: Create new texture if mapping failed or dimensions changed
+                        let desc = windows::Win32::Graphics::Direct3D11::D3D11_TEXTURE2D_DESC {
+                            Width: rx.width,
+                            Height: rx.height,
+                            MipLevels: 1,
+                            ArraySize: 1,
+                            Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
+                            SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                            Usage: windows::Win32::Graphics::Direct3D11::D3D11_USAGE_DEFAULT,
+                            BindFlags: windows::Win32::Graphics::Direct3D11::D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                            ..Default::default()
+                        };
+                        
+                        let init_data = windows::Win32::Graphics::Direct3D11::D3D11_SUBRESOURCE_DATA {
+                            pSysMem: rx.pixels.as_ptr() as *const _,
+                            SysMemPitch: rx.width * 4,
+                            SysMemSlicePitch: 0,
+                        };
+
+                        let mut texture: Option<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D> = None;
+                        if self.device.CreateTexture2D(&desc, Some(&init_data), Some(&mut texture)).is_ok() {
+                            if let Ok(mut staging_lock) = staging_mutex.lock() {
+                                *staging_lock = Some((texture.unwrap(), 0, None));
+                                rx.is_dirty = false;
+                            }
+                        }
                     }
                 }
             };
@@ -589,21 +671,20 @@ impl Dx11Compositor {
             let aspect_b = get_aspect(&*lock_b);
             let aspect_out = if current_h > 0 { current_w as f32 / current_h as f32 } else { 1.0 };
 
-            let spatial_state = *SPATIAL_COLOR_STATE.read().unwrap();
             let blend_data = BlendData {
                 blend_factor, aspect_a, aspect_b, aspect_out,
                 inv_homography: calculate_inverse_homography(geometry),
-                crop_left: spatial_state.crop_left,
-                crop_top: spatial_state.crop_top,
-                crop_right: spatial_state.crop_right,
-                crop_bottom: spatial_state.crop_bottom,
-                pan_x: spatial_state.pan_x,
-                pan_y: spatial_state.pan_y,
-                zoom: spatial_state.zoom,
+                crop_left: crop[0],
+                crop_top: crop[1],
+                crop_right: crop[2],
+                crop_bottom: crop[3],
+                pan_x: pan_zoom[0],
+                pan_y: pan_zoom[1],
+                zoom: pan_zoom[2],
                 _pad0: 0.0,
-                brightness: spatial_state.brightness,
-                contrast: spatial_state.contrast,
-                saturation: spatial_state.saturation,
+                brightness: color[0],
+                contrast: color[1],
+                saturation: color[2],
                 _pad1: 0.0,
             };
             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
@@ -614,44 +695,130 @@ impl Dx11Compositor {
             self.context.VSSetConstantBuffers(0, Some(&[Some(self.constant_buffer.clone())]));
             self.context.PSSetConstantBuffers(0, Some(&[Some(self.constant_buffer.clone())]));
 
-            let create_srv = |tex_opt: &Option<(ID3D11Texture2D, u32, Option<SendableSample>)>| -> Result<Option<ID3D11ShaderResourceView>> {
+            let create_srv = |tex_opt: &Option<(ID3D11Texture2D, u32, Option<SendableSample>)>, deck_index: u8| -> Result<Option<ID3D11ShaderResourceView>> {
                 if let Some((tex, subresource, _)) = tex_opt {
                     let mut desc = D3D11_TEXTURE2D_DESC::default();
-                    tex.GetDesc(&mut desc);
+                    unsafe { tex.GetDesc(&mut desc) };
 
-                    let mut srv_desc = D3D11_SHADER_RESOURCE_VIEW_DESC {
-                        Format: desc.Format,
-                        ..Default::default()
-                    };
+                    let is_p010 = desc.Format == windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_P010;
+                    let is_nv12 = desc.Format == windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12;
 
+                    if is_p010 || is_nv12 {
+                        let mut staging_lock = if deck_index == 0 { self.compute_staging_a.lock().unwrap() } else { self.compute_staging_b.lock().unwrap() };
+                        
+                        let need_realloc = match &*staging_lock {
+                            Some(stage) => stage.width != desc.Width || stage.height != desc.Height || stage.format != desc.Format.0 as u32,
+                            None => true,
+                        };
+
+                        if need_realloc {
+                            let planar_desc = D3D11_TEXTURE2D_DESC {
+                                Width: desc.Width, Height: desc.Height, MipLevels: 1, ArraySize: 1, Format: desc.Format,
+                                SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                                Usage: windows::Win32::Graphics::Direct3D11::D3D11_USAGE_DEFAULT,
+                                BindFlags: windows::Win32::Graphics::Direct3D11::D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                                ..Default::default()
+                            };
+                            let mut planar_tex_opt: Option<ID3D11Texture2D> = None;
+                            unsafe { self.device.CreateTexture2D(&planar_desc, None, Some(&mut planar_tex_opt))? };
+                            let planar_tex = planar_tex_opt.unwrap();
+
+                            let uav_desc = D3D11_TEXTURE2D_DESC {
+                                Width: desc.Width, Height: desc.Height, MipLevels: 1, ArraySize: 1,
+                                Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R16G16B16A16_FLOAT, // 16-Bit Guaranteed Hardware UAV Support
+                                SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                                Usage: windows::Win32::Graphics::Direct3D11::D3D11_USAGE_DEFAULT,
+                                BindFlags: windows::Win32::Graphics::Direct3D11::D3D11_BIND_UNORDERED_ACCESS.0 as u32 | windows::Win32::Graphics::Direct3D11::D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                                ..Default::default()
+                            };
+                            let mut uav_tex_opt: Option<ID3D11Texture2D> = None;
+                            unsafe { self.device.CreateTexture2D(&uav_desc, None, Some(&mut uav_tex_opt))? };
+                            let uav_tex = uav_tex_opt.unwrap();
+                            let res_uav: ID3D11Resource = uav_tex.cast()?;
+                            let mut uav_view_opt: Option<ID3D11UnorderedAccessView> = None;
+                            unsafe { self.device.CreateUnorderedAccessView(&res_uav, None, Some(&mut uav_view_opt))? };
+                            let mut srv_view_opt: Option<ID3D11ShaderResourceView> = None;
+                            unsafe { self.device.CreateShaderResourceView(&res_uav, None, Some(&mut srv_view_opt))? };
+
+                            *staging_lock = Some(ComputeStaging {
+                                planar_tex, uav_tex, uav_view: uav_view_opt.unwrap(), srv_view: srv_view_opt.unwrap(),
+                                width: desc.Width, height: desc.Height, format: desc.Format.0 as u32,
+                            });
+                        }
+
+                        let stage = staging_lock.as_ref().unwrap();
+
+                        // 2. DUAL ZERO-COPY DMA TRANSFER
+                        let src_res: ID3D11Resource = tex.cast()?;
+                        let dst_res: ID3D11Resource = stage.planar_tex.cast()?;
+                        let mut src_desc = D3D11_TEXTURE2D_DESC::default();
+                        unsafe { tex.GetDesc(&mut src_desc) };
+
+                        unsafe { 
+                            // Luma
+                            self.context.CopySubresourceRegion(&dst_res, 0, 0, 0, 0, &src_res, *subresource, None);
+                            // Chroma (Mathematically requires + ArraySize for DXGI Planar formats)
+                            self.context.CopySubresourceRegion(&dst_res, 1, 0, 0, 0, &src_res, *subresource + src_desc.ArraySize, None);
+                        }
+
+                        let (luma_fmt, chroma_fmt) = if is_p010 { 
+                            (windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R16_UNORM, windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R16G16_UNORM)
+                        } else { 
+                            (windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8_UNORM, windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8_UNORM)
+                        };
+
+                        let mut luma_desc = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: luma_fmt, ViewDimension: D3D_SRV_DIMENSION_TEXTURE2D, ..Default::default() };
+                        luma_desc.Anonymous.Texture2D = windows::Win32::Graphics::Direct3D11::D3D11_TEX2D_SRV { MostDetailedMip: 0, MipLevels: 1 };
+                        
+                        let mut chroma_desc = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: chroma_fmt, ViewDimension: D3D_SRV_DIMENSION_TEXTURE2D, ..Default::default() };
+                        chroma_desc.Anonymous.Texture2D = windows::Win32::Graphics::Direct3D11::D3D11_TEX2D_SRV { MostDetailedMip: 0, MipLevels: 1 };
+
+                        let mut luma_srv_opt: Option<ID3D11ShaderResourceView> = None;
+                        let mut chroma_srv_opt: Option<ID3D11ShaderResourceView> = None;
+                        
+                        unsafe {
+                            self.device.CreateShaderResourceView(&dst_res, Some(&luma_desc), Some(&mut luma_srv_opt))?;
+                            self.device.CreateShaderResourceView(&dst_res, Some(&chroma_desc), Some(&mut chroma_srv_opt))?;
+                            
+                            self.context.CSSetShader(&self.compute_shader, None);
+                            let srvs = [luma_srv_opt.clone(), chroma_srv_opt.clone()];
+                            self.context.CSSetShaderResources(2, Some(&srvs));
+                            
+                            let uavs = [Some(stage.uav_view.clone())];
+                            self.context.CSSetUnorderedAccessViews(0, 1, Some(uavs.as_ptr() as *const _), None);
+                            
+                            self.context.Dispatch((desc.Width + 7) / 8, (desc.Height + 7) / 8, 1); 
+                            
+                            // CRITICAL FLUSH: Unbind UAV and CS SRVs before returning
+                            let null_uavs: [Option<ID3D11UnorderedAccessView>; 1] = [None];
+                            self.context.CSSetUnorderedAccessViews(0, 1, Some(null_uavs.as_ptr() as *const _), None);
+                            let null_cs_srvs: [Option<ID3D11ShaderResourceView>; 2] = [None, None];
+                            self.context.CSSetShaderResources(2, Some(&null_cs_srvs));
+                        }
+                        
+                        return Ok(Some(stage.srv_view.clone()));
+                    }
+
+                    // STANDARD 8-BIT BYPASS (NDI / UI)
+                    let mut srv_desc = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: desc.Format, ..Default::default() };
                     if desc.ArraySize > 1 {
                         srv_desc.ViewDimension = D3D_SRV_DIMENSION_TEXTURE2DARRAY;
-                        srv_desc.Anonymous.Texture2DArray = windows::Win32::Graphics::Direct3D11::D3D11_TEX2D_ARRAY_SRV {
-                            MostDetailedMip: 0,
-                            MipLevels: 1,
-                            FirstArraySlice: *subresource,
-                            ArraySize: 1,
-                        };
+                        srv_desc.Anonymous.Texture2DArray = windows::Win32::Graphics::Direct3D11::D3D11_TEX2D_ARRAY_SRV { MostDetailedMip: 0, MipLevels: 1, FirstArraySlice: *subresource, ArraySize: 1 };
                     } else {
                         srv_desc.ViewDimension = D3D_SRV_DIMENSION_TEXTURE2D;
-                        srv_desc.Anonymous.Texture2D = windows::Win32::Graphics::Direct3D11::D3D11_TEX2D_SRV {
-                            MostDetailedMip: 0,
-                            MipLevels: 1,
-                        };
+                        srv_desc.Anonymous.Texture2D = windows::Win32::Graphics::Direct3D11::D3D11_TEX2D_SRV { MostDetailedMip: 0, MipLevels: 1 };
                     }
                     let mut srv_opt: Option<ID3D11ShaderResourceView> = None;
                     let res: ID3D11Resource = tex.cast()?;
-                    self.device.CreateShaderResourceView(&res, Some(&srv_desc), Some(&mut srv_opt))?;
+                    unsafe { self.device.CreateShaderResourceView(&res, Some(&srv_desc), Some(&mut srv_opt))? };
                     Ok(srv_opt)
                 } else {
                     Ok(None)
                 }
             };
 
-
-            // Better way:
-            let srv_a_opt = create_srv(&*lock_a)?;
-            let srv_b_opt = create_srv(&*lock_b)?;
+            let srv_a_opt = create_srv(&*lock_a, 0)?;
+            let srv_b_opt = create_srv(&*lock_b, 1)?;
 
             let srvs = [srv_a_opt.clone(), srv_b_opt.clone()];
             self.context.PSSetShaderResources(0, Some(&srvs));
@@ -667,7 +834,13 @@ impl Dx11Compositor {
                     if let Ok(dest_tex) = out_swap.GetBuffer::<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D>(0) {
                         let dest_res: ID3D11Resource = dest_tex.cast()?;
                         self.context.CopyResource(&dest_res, &src_res);
-                        let _ = out_swap.Present(0, 0); // VSync off (0,0) to prevent UI stalling
+                        let present_result = unsafe { out_swap.Present(0, 0) }; // VSync off (0,0) to prevent UI stalling
+                        if present_result.is_err() {
+                            let code = present_result.0 as u32;
+                            if code == 0x887A0005 || code == 0x887A0007 {
+                                DEVICE_LOST_FLAG.store(true, Ordering::Release);
+                            }
+                        }
                     }
                 }
             }
@@ -770,11 +943,19 @@ impl Dx11Compositor {
             
             self.d2d_render_target.EndDraw(None, None).unwrap();
 
-            // Unbind to release references safely
-            self.context.PSSetShaderResources(0, Some(&[None, None]));
+            // CRITICAL HAZARD FLUSH: Unbind all SRVs from the Pixel Shader so the next frame's Compute Shader can bind them as UAVs.
+            let null_ps_srvs: [Option<ID3D11ShaderResourceView>; 2] = [None, None];
+            unsafe { self.context.PSSetShaderResources(0, Some(&null_ps_srvs)) };
             self.context.OMSetRenderTargets(None, None);
 
-            let _ = self.swapchain.Present(1, 0);
+            let present_result = self.swapchain.Present(1, 0);
+            if present_result.is_err() {
+                let code = present_result.0 as u32;
+                println!("M-Playlist [CRITICAL]: DXGI Present Failed! HRESULT: 0x{:X}", code);
+                if code == 0x887A0005 || code == 0x887A0007 {
+                    crate::ffi::DEVICE_LOST_FLAG.store(true, std::sync::atomic::Ordering::Release);
+                }
+            }
         }
         Ok(())
     }
