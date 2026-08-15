@@ -11,6 +11,7 @@ namespace MPlaylistApp
         public long OutPointHnsecs;
         public byte IsLooping;
         public byte HoldLastFrame;
+        public byte AudioRouting;
         public long TransitionDurationHnsecs;
         public byte Modality;
         public byte HardwareIndex;
@@ -34,6 +35,8 @@ namespace MPlaylistApp
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void mplaylist_set_volume_db(float db);
+        [DllImport("m_playlist.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern void mplaylist_set_blend(float val);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void mplaylist_pause();
@@ -60,6 +63,7 @@ namespace MPlaylistApp
                     OutPointHnsecs = (long)model.OutPointHNS,
                     IsLooping = (byte)(model.IsLooping ? 1 : 0),
                     HoldLastFrame = (byte)(model.HoldLastFrame ? 1 : 0),
+                    AudioRouting = 0,
                     TransitionDurationHnsecs = (long)(model.TransitionDuration * 10000000.0),
                     Modality = (byte)model.Modality,
                     HardwareIndex = (byte)0 // Default to device 0, UI logic can update this later
@@ -127,6 +131,11 @@ namespace MPlaylistApp
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern bool mplaylist_fire_cue(FfiCue cue);
+    [DllImport("m_playlist.dll", CallingConvention = CallingConvention.Cdecl)] public static extern void mplaylist_update_subtitle(IntPtr utf8_text);
+    [DllImport("m_playlist.dll", CallingConvention = CallingConvention.Cdecl)] public static extern float mplaylist_calculate_lufs(IntPtr filepath);
+
+        [DllImport("m_playlist.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern bool mplaylist_transcode_file(IntPtr in_path, IntPtr out_path);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern uint mplaylist_get_audio_device_count();
@@ -185,5 +194,7 @@ namespace MPlaylistApp
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         public static extern bool mplaylist_bind_output_matrix(IntPtr hwnd);
+        [DllImport("m_playlist.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern ulong mplaylist_get_ltc_timecode();
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Windows;
+using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
 using System.Windows.Threading;
 using System.Collections.ObjectModel;
@@ -30,18 +31,63 @@ namespace MPlaylistApp
         private ObservableCollection<MediaCue> _playlist = new ObservableCollection<MediaCue>();
         private VideoHwndHost? _videoSurface;
         private FileStateMonitor? _fileMonitor;
+        private FileSystemWatcher? _mediaWatcher;
+        private DispatcherTimer? _debounceTimer;
+        private string _lastModifiedFile = string.Empty;
         private MediaCue? _activePlayingCue;
         private bool _isPaused = false;
         private OscServer? _oscServer;
+        private HyperDeckEmulator? _hyperDeckServer;
+        private ArtNetReceiver? _artNetReceiver;
+        private IntPtr _hMidiIn = IntPtr.Zero;
+        private MidiInProc? _midiCallback;
 
         private float _smoothedVuL = 0;
         private float _smoothedVuR = 0;
 
+private async void InitializeBrowserOverlayAsync()
+        {
+            var envOptions = new CoreWebView2EnvironmentOptions("--enable-transparent-visuals");
+            var env = await CoreWebView2Environment.CreateAsync(null, null, envOptions);
+            await OverlayBrowser.EnsureCoreWebView2Async(env);
+            OverlayBrowser.DefaultBackgroundColor = System.Drawing.Color.Transparent;
+            // Load a stable broadcast URL for testing
+            OverlayBrowser.Source = new Uri("https://singular.live");
+        }
+
+        private void AddHtmlOverlay_Click(object sender, RoutedEventArgs e)
+        {
+            // Assuming _browserWindow is initialized as before
+            IntPtr hwnd = IntPtr.Zero;
+            
+            MediaCue htmlCue = new MediaCue
+            {
+                CueID = Guid.NewGuid().ToString(),
+                Title = "Live HTML5 Overlay",
+                FilePath = hwnd.ToString(),
+                Modality = CueModality.WebView2Overlay,
+                HardwareIndex = 0,
+                DurationHNS = (ulong)TimeSpan.FromHours(10).Ticks,
+                TransitionMs = 1000
+            };
+            _playlist.Add(htmlCue);
+        }
+
         public MainWindow()
         {
             InitializeComponent();
+            InitializeBrowserOverlayAsync();
             PlaylistUI.ItemsSource = _playlist;
             _fileMonitor = new FileStateMonitor(_playlist);
+            
+            _debounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+            _debounceTimer.Tick += DebounceTimer_Tick;
+            
+            _mediaWatcher = new FileSystemWatcher();
+            _mediaWatcher.Path = AppDomain.CurrentDomain.BaseDirectory;
+            _mediaWatcher.NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size;
+            _mediaWatcher.EnableRaisingEvents = true;
+            _mediaWatcher.Changed += MediaWatcher_Changed;
             
             _conductor = new EngineConductor();
             _conductor.OnCueActivated += (cue) => 
@@ -59,6 +105,15 @@ namespace MPlaylistApp
             
             _playlist.CollectionChanged += (s, e) => {
                 _conductor.UpdatePlaylistTopology(_playlist);
+                if (_playlist.Count > 0 && !string.IsNullOrEmpty(_playlist[0].FilePath) && !_playlist[0].FilePath.StartsWith("ndi://") && !_playlist[0].FilePath.StartsWith("camera://"))
+                {
+                    try {
+                        string? dir = System.IO.Path.GetDirectoryName(_playlist[0].FilePath);
+                        if (!string.IsNullOrEmpty(dir) && System.IO.Directory.Exists(dir)) {
+                            _mediaWatcher.Path = dir;
+                        }
+                    } catch {}
+                }
             };
 
             this.Loaded += MainWindow_Loaded;
@@ -101,6 +156,20 @@ namespace MPlaylistApp
                     _oscServer = new OscServer(_conductor);
                     _oscServer.Start(51001);
                     
+                    _hyperDeckServer = new HyperDeckEmulator(_conductor);
+                    _hyperDeckServer.Start();
+
+                    _artNetReceiver = new ArtNetReceiver(_conductor, Dispatcher);
+                    
+                    if (MidiInterop.midiInGetNumDevs() > 0)
+                    {
+                        _midiCallback = new MidiInProc(MidiCallbackHandler);
+                        if (MidiInterop.midiInOpen(out _hMidiIn, 0, _midiCallback, IntPtr.Zero, MidiInterop.CALLBACK_FUNCTION) == 0)
+                        {
+                            MidiInterop.midiInStart(_hMidiIn);
+                        }
+                    }
+                    
                     // Start UI polling for timecode (loose 33ms interval purely for UI updates)
                     _uiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
                     _uiTimer.Tick += (s, args) =>
@@ -127,8 +196,26 @@ namespace MPlaylistApp
                             
                             TimecodeText.Text = $"A: {TimeSpan.FromSeconds(audioTime).ToString(@"hh\:mm\:ss\:ff")} | V: {TimeSpan.FromSeconds(videoTime).ToString(@"hh\:mm\:ss\:ff")}";
                             
-                            if (!_isUserScrubbing)
-                                TimelineSlider.Value = _conductor.CurrentVideoTime * 10000000.0;
+                            
+                          if (ChaseLtcToggle.IsChecked == true)
+                          {
+                              ulong ltc_hns = EngineInterop.mplaylist_get_ltc_timecode() * 10000 / 30; // approx conversion depending on fps, wait: LTC gives hh:mm:ss:ff packed.
+                              // Let's decode the packed atomic u64 first!
+                              ulong packed = EngineInterop.mplaylist_get_ltc_timecode();
+                              ulong hh = (packed >> 24) & 0xFF;
+                              ulong mm = (packed >> 16) & 0xFF;
+                              ulong ss = (packed >> 8) & 0xFF;
+                              ulong ff = packed & 0xFF;
+                              
+                              double totalSeconds = (hh * 3600) + (mm * 60) + ss + (ff / 30.0);
+                              _conductor.RequestScrub((long)(totalSeconds * 10000000.0));
+                          }
+                          else
+                          {
+                              if (!_isUserScrubbing)
+                                  TimelineSlider.Value = _conductor.CurrentVideoTime * 10000000.0;
+                          }
+
 
                             if (OverlayToggle.IsChecked == true && _activePlayingCue != null && _conductor != null)
                             {
@@ -252,6 +339,85 @@ namespace MPlaylistApp
             }
         }
 
+        
+        private async void OnBundleShowClicked(object sender, RoutedEventArgs e)
+        {
+            var dialog = new Microsoft.Win32.SaveFileDialog
+            {
+                Filter = "M-Playlist Show File (*.json)|*.json",
+                Title = "Bundle Show"
+            };
+
+            if (dialog.ShowDialog() == true)
+            {
+                string bundleDir = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(dialog.FileName), System.IO.Path.GetFileNameWithoutExtension(dialog.FileName) + "_Bundle");
+                System.IO.Directory.CreateDirectory(bundleDir);
+                
+                string showFilePath = System.IO.Path.Combine(bundleDir, System.IO.Path.GetFileName(dialog.FileName));
+                
+                // clone list to pass to bg thread
+                var clonedPlaylist = new System.Collections.Generic.List<MediaCue>();
+                foreach (var cue in _playlist)
+                {
+                    clonedPlaylist.Add(new MediaCue
+                    {
+                        // Assume deep clone logic or just copying properties
+                        FilePath = cue.FilePath,
+                        Title = cue.Title,
+                        ColorTag = cue.ColorTag,
+                        Notes = cue.Notes,
+                        EndBehavior = cue.EndBehavior,
+                        InPointHNS = cue.InPointHNS,
+                        OutPointHNS = cue.OutPointHNS,
+                        DurationHNS = cue.DurationHNS,
+                        TransitionMs = cue.TransitionMs,
+                        VolumeDb = cue.VolumeDb
+                    });
+                }
+
+                StatusText.Text = "Bundling show... please wait.";
+
+                await Task.Run(() =>
+                {
+                    var fileMap = new System.Collections.Generic.Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    
+                    foreach (var cue in clonedPlaylist)
+                    {
+                        if (cue.Modality == CueModality.WMFTemporal || cue.Modality == CueModality.WICStatic)
+                        {
+                            if (!string.IsNullOrEmpty(cue.FilePath) && System.IO.File.Exists(cue.FilePath))
+                            {
+                                if (!fileMap.TryGetValue(cue.FilePath, out string relativeName))
+                                {
+                                    relativeName = System.IO.Path.GetFileName(cue.FilePath);
+                                    string destPath = System.IO.Path.Combine(bundleDir, relativeName);
+                                    
+                                    // Handle name collisions if necessary
+                                    int counter = 1;
+                                    while (System.IO.File.Exists(destPath) && fileMap.ContainsValue(relativeName))
+                                    {
+                                        relativeName = $"{System.IO.Path.GetFileNameWithoutExtension(cue.FilePath)}_{counter}{System.IO.Path.GetExtension(cue.FilePath)}";
+                                        destPath = System.IO.Path.Combine(bundleDir, relativeName);
+                                        counter++;
+                                    }
+                                    
+                                    System.IO.File.Copy(cue.FilePath, destPath, true);
+                                    fileMap[cue.FilePath] = relativeName;
+                                }
+                                cue.FilePath = relativeName;
+                            }
+                        }
+                    }
+                    
+                    var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+                    string json = System.Text.Json.JsonSerializer.Serialize(clonedPlaylist, options);
+                    System.IO.File.WriteAllText(showFilePath, json);
+                });
+
+                StatusText.Text = $"Bundle Complete: {bundleDir}";
+            }
+        }
+
         private void OnAddCueClicked(object sender, RoutedEventArgs e)
         {
             Microsoft.Win32.OpenFileDialog openFileDialog = new Microsoft.Win32.OpenFileDialog
@@ -324,18 +490,32 @@ namespace MPlaylistApp
 
         private void AddDxgi_Click(object sender, RoutedEventArgs e)
         {
-            var cue = new FfiCue { Modality = 4, HardwareIndex = 0 };
-            EngineInterop.mplaylist_load_cue(cue);
-            EngineInterop.mplaylist_fire_cue(cue);
-            StatusText.Text = "Forced DXGI (Modality 4)";
+            MediaCue dxgiCue = new MediaCue
+            {
+                CueID = Guid.NewGuid().ToString(),
+                Title = "Live DXGI Desktop",
+                FilePath = "DXGI_0",
+                Modality = CueModality.DxgiDesktop,
+                HardwareIndex = 0,
+                DurationHNS = (ulong)TimeSpan.FromHours(10).Ticks, // Infinite live feed
+                TransitionMs = 1000
+            };
+            _playlist.Add(dxgiCue);
         }
 
         private void AddSdi_Click(object sender, RoutedEventArgs e)
         {
-            var cue = new FfiCue { Modality = 5, HardwareIndex = 0 };
-            EngineInterop.mplaylist_load_cue(cue);
-            EngineInterop.mplaylist_fire_cue(cue);
-            StatusText.Text = "Forced SDI (Modality 5)";
+            MediaCue sdiCue = new MediaCue
+            {
+                CueID = Guid.NewGuid().ToString(),
+                Title = "Live SDI Input",
+                FilePath = "SDI_0",
+                Modality = CueModality.DeckLinkSdi,
+                HardwareIndex = 0,
+                DurationHNS = (ulong)TimeSpan.FromHours(10).Ticks,
+                TransitionMs = 1000
+            };
+            _playlist.Add(sdiCue);
         }
 
         private void OnPlayClicked(object sender, RoutedEventArgs e)
@@ -394,6 +574,15 @@ namespace MPlaylistApp
         private void MainWindow_Closed(object? sender, EventArgs e)
         {
             _oscServer?.Stop();
+            _hyperDeckServer?.Stop();
+            _artNetReceiver?.Stop();
+            
+            if (_hMidiIn != IntPtr.Zero)
+            {
+                MidiInterop.midiInStop(_hMidiIn);
+                MidiInterop.midiInClose(_hMidiIn);
+                _hMidiIn = IntPtr.Zero;
+            }
             _conductor.Stop();
             // 3.5 Dispose FileSystemWatchers
             _fileMonitor?.Dispose();
@@ -514,6 +703,66 @@ namespace MPlaylistApp
             }
         }
 
+        
+        
+        private async void TranscodeVideo_Click(object sender, RoutedEventArgs e)
+        {
+            if (PlaylistUI.SelectedItem is MediaCue cue && cue.Modality == CueModality.WMFTemporal)
+            {
+                var dialog = new Microsoft.Win32.SaveFileDialog
+                {
+                    Filter = "MP4 File (*.mp4)|*.mp4",
+                    Title = "Hardware Conformity Transcode"
+                };
+                
+                if (dialog.ShowDialog() == true)
+                {
+                    string inPath = cue.FilePath;
+                    string outPath = dialog.FileName;
+                    
+                    StatusText.Text = "Transcoding to H.264/AAC... please wait.";
+                    
+                    bool success = await Task.Run(() =>
+                    {
+                        IntPtr ptrIn = System.Runtime.InteropServices.Marshal.StringToHGlobalAnsi(inPath);
+                        IntPtr ptrOut = System.Runtime.InteropServices.Marshal.StringToHGlobalAnsi(outPath);
+                        bool res = EngineInterop.mplaylist_transcode_file(ptrIn, ptrOut);
+                        System.Runtime.InteropServices.Marshal.FreeHGlobal(ptrIn);
+                        System.Runtime.InteropServices.Marshal.FreeHGlobal(ptrOut);
+                        return res;
+                    });
+                    
+                    if (success)
+                    {
+                        StatusText.Text = $"Transcode Complete: {outPath}";
+                    }
+                    else
+                    {
+                        StatusText.Text = "Transcode Failed.";
+                    }
+                }
+            }
+        }
+
+        private async void NormalizeAudio_Click(object sender, RoutedEventArgs e)
+        {
+            if (PlaylistUI.SelectedItem is MediaCue cue && cue.Modality == CueModality.WMFTemporal)
+            {
+                string path = cue.FilePath;
+                float dbOffset = await Task.Run(() =>
+                {
+                    IntPtr ptr = System.Runtime.InteropServices.Marshal.StringToHGlobalAnsi(path);
+                    float offset = EngineInterop.mplaylist_calculate_lufs(ptr);
+                    System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
+                    return offset;
+                });
+                
+                cue.VolumeDb += dbOffset;
+                if (cue.VolumeDb > 12) cue.VolumeDb = 12;
+                if (cue.VolumeDb < -60) cue.VolumeDb = -60;
+            }
+        }
+
         private void OnVolumeSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             EngineInterop.mplaylist_set_volume_db((float)e.NewValue);
@@ -570,6 +819,79 @@ namespace MPlaylistApp
                 try { EngineInterop.mplaylist_set_overlay_text(false, null); } catch { }
             }
         }
+
+        private void MediaWatcher_Changed(object sender, FileSystemEventArgs e)
+        {
+            Dispatcher.Invoke(() => 
+            {
+                _lastModifiedFile = e.FullPath;
+                if (_debounceTimer != null)
+                {
+                    _debounceTimer.Stop();
+                    _debounceTimer.Start();
+                }
+            });
+        }
+
+        private void DebounceTimer_Tick(object? sender, EventArgs e)
+        {
+            if (_debounceTimer != null) _debounceTimer.Stop();
+            
+            if (_activePlayingCue != null && string.Equals(_activePlayingCue.FilePath, _lastModifiedFile, StringComparison.OrdinalIgnoreCase))
+            {
+                IntPtr ptr = System.Runtime.InteropServices.Marshal.StringToCoTaskMemUTF8(_activePlayingCue.FilePath);
+                try
+                {
+                    FfiCue hotCue = new FfiCue
+                    {
+                        FilePath = ptr,
+                        InPointHnsecs = (long)_activePlayingCue.InPointHNS,
+                        OutPointHnsecs = (long)_activePlayingCue.OutPointHNS,
+                        IsLooping = (byte)(_activePlayingCue.IsLooping ? 1 : 0),
+                        HoldLastFrame = (byte)(_activePlayingCue.HoldLastFrame ? 1 : 0),
+                        TransitionDurationHnsecs = 0,
+                        Modality = (byte)_activePlayingCue.Modality,
+                        HardwareIndex = 0
+                    };
+                    EngineInterop.mplaylist_load_cue(hotCue);
+                    EngineInterop.mplaylist_fire_cue(hotCue);
+                    StatusText.Text = $"Hot-Reloaded: {_activePlayingCue.Title}";
+                }
+                finally
+                {
+                    System.Runtime.InteropServices.Marshal.FreeCoTaskMem(ptr);
+                }
+            }
+        }
+
+        private void MidiCallbackHandler(IntPtr hMidiIn, uint wMsg, IntPtr dwInstance, uint dwParam1, uint dwParam2)
+        {
+            if (wMsg == MidiInterop.MIM_DATA)
+            {
+                uint status = dwParam1 & 0xFF;
+                uint data1 = (dwParam1 >> 8) & 0xFF;
+                uint data2 = (dwParam1 >> 16) & 0xFF;
+
+                if ((status & 0xF0) == 0x90) // Note On
+                {
+                    if (data2 > 0)
+                    {
+                        Dispatcher.BeginInvoke(new Action(() => 
+                        {
+                            if (_conductor != null) _conductor.TransportFireNext();
+                        }));
+                    }
+                }
+                else if ((status & 0xF0) == 0xB0) // Control Change
+                {
+                    float volumeDb = -60f + (data2 / 127f) * 60f;
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        EngineInterop.mplaylist_set_volume_db(volumeDb);
+                    }));
+                }
+            }
+        }
     }
 
     public class StringToBrushConverter : System.Windows.Data.IValueConverter
@@ -585,3 +907,5 @@ namespace MPlaylistApp
         public object ConvertBack(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture) => null;
     }
 }
+
+

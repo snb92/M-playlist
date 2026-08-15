@@ -15,8 +15,8 @@ pub struct Playlist {
     pub ndi_enabled: bool,
     pub pending_fire: bool,
     pub incoming_is_static: bool,
-    pub ndi_run_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-    pub dxgi_run_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    pub bg_worker_a: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    pub bg_worker_b: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl Playlist {
@@ -31,8 +31,8 @@ impl Playlist {
             ndi_enabled: false,
             pending_fire: false,
             incoming_is_static: false,
-            ndi_run_flag: None,
-            dxgi_run_flag: None,
+            bg_worker_a: None,
+            bg_worker_b: None,
         }
     }
 
@@ -72,6 +72,7 @@ impl Playlist {
             transition_duration_hnsecs: target_cue.transition_duration_hnsecs,
             modality: target_cue.modality,
             hardware_index: target_cue.hardware_index,
+            audio_routing: target_cue.audio_routing,
         };
         let cue = &engine_cue;
 
@@ -93,22 +94,18 @@ impl Playlist {
         let is_deck_a = !self.is_deck_a_active;
 
         if is_deck_a {
-            ring_a.flush();
+            graphics.hardware_flush_a.store(true, std::sync::atomic::Ordering::Release);
+            graphics.modality_a.store(cue.modality, std::sync::atomic::Ordering::Release);
+            if let Some(flag) = self.bg_worker_a.take() { flag.store(false, std::sync::atomic::Ordering::Release); }
         } else {
-            ring_b.flush();
-        }
-
-        // Clear webview on the target deck so we don't hold over old HTML
-        if cue.modality != 6 {
-            if is_deck_a {
-                if let Ok(mut lock) = graphics.webview_srv_a.lock() { *lock = None; }
-            } else {
-                if let Ok(mut lock) = graphics.webview_srv_b.lock() { *lock = None; }
-            }
+            graphics.hardware_flush_b.store(true, std::sync::atomic::Ordering::Release);
+            graphics.modality_b.store(cue.modality, std::sync::atomic::Ordering::Release);
+            if let Some(flag) = self.bg_worker_b.take() { flag.store(false, std::sync::atomic::Ordering::Release); }
         }
 
         match cue.modality {
             0 => {
+                println!("M-Playlist [WMF]: Intercepted Modality 0! Firing MediaEngine.");
                 if is_deck_a {
                     self.deck_a = Some(MediaEngine::new(0).unwrap());
                     if let Some(deck_a) = self.deck_a.as_mut() {
@@ -141,48 +138,77 @@ impl Playlist {
             },
             2 => {
                 println!("M-Playlist [NDI]: Intercepted Modality 2! Ready to spawn receiver.");
-                if let Some(flag) = self.ndi_run_flag.take() {
-                    flag.store(false, std::sync::atomic::Ordering::Release);
-                }
                 let new_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-                self.ndi_run_flag = Some(new_flag.clone());
+                if is_deck_a {
+                    self.bg_worker_a = Some(new_flag.clone());
+                } else {
+                    self.bg_worker_b = Some(new_flag.clone());
+                }
                 
                 let rx_buffer = if is_deck_a { graphics.ndi_rx_a.clone() } else { graphics.ndi_rx_b.clone() };
                 crate::ndi_receiver::spawn_receiver(cue.filepath.clone(), rx_buffer, new_flag);
             },
+            3 => {
+                // Modality 3: Local Camera (WMF Hardware Capture)
+                if is_deck_a {
+                    self.deck_a = Some(MediaEngine::new(0).unwrap());
+                    if let Some(deck_a) = self.deck_a.as_mut() {
+                        deck_a.load_and_play(cue, ring_a.clone(), clock.clone(), graphics.clone(), blend_factor.clone()).unwrap();
+                        deck_a.is_paused.store(false, std::sync::atomic::Ordering::Release);
+                    }
+                } else {
+                    self.deck_b = Some(MediaEngine::new(1).unwrap());
+                    if let Some(deck_b) = self.deck_b.as_mut() {
+                        deck_b.load_and_play(cue, ring_b.clone(), clock.clone(), graphics.clone(), blend_factor.clone()).unwrap();
+                        deck_b.is_paused.store(false, std::sync::atomic::Ordering::Release);
+                    }
+                }
+            },
             4 => {
                 println!("M-Playlist [DXGI]: Intercepted Modality 4! Ready to spawn receiver.");
-                if let Some(flag) = self.dxgi_run_flag.take() {
-                    flag.store(false, std::sync::atomic::Ordering::Release);
-                }
                 let new_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-                self.dxgi_run_flag = Some(new_flag.clone());
+                if is_deck_a {
+                    self.bg_worker_a = Some(new_flag.clone());
+                } else {
+                    self.bg_worker_b = Some(new_flag.clone());
+                }
                 
                 let rx_buffer = if is_deck_a { graphics.dxgi_rx_a.clone() } else { graphics.dxgi_rx_b.clone() };
                 crate::desktop_capture::spawn_receiver(cue.hardware_index, rx_buffer, new_flag, graphics.device.clone());
             },
             5 => {
                 println!("M-Playlist [SDI]: Intercepted Modality 5! Ready to spawn receiver.");
-                if let Some(flag) = self.dxgi_run_flag.take() {
-                    flag.store(false, std::sync::atomic::Ordering::Release);
-                }
                 let new_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-                self.dxgi_run_flag = Some(new_flag.clone());
+                if is_deck_a {
+                    self.bg_worker_a = Some(new_flag.clone());
+                } else {
+                    self.bg_worker_b = Some(new_flag.clone());
+                }
                 
                 let rx_buffer = if is_deck_a { graphics.sdi_rx_a.clone() } else { graphics.sdi_rx_b.clone() };
                 crate::decklink_capture::spawn_receiver(cue.hardware_index, rx_buffer, new_flag);
             },
             6 => {
-                println!("M-Playlist [WEBVIEW]: Intercepted Modality 6 Shared Handle!");
-                let handle_val = cue.filepath.as_ptr() as usize;
-                if let Err(e) = graphics.load_shared_surface(handle_val, is_deck_a) {
-                    println!("M-Playlist [WEBVIEW]: Failed to open shared surface: {:?}", e);
+                println!("M-Playlist [WEBVIEW]: Intercepted Modality 6! Spawning WGC receiver.");
+                let new_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+                if is_deck_a {
+                    self.bg_worker_a = Some(new_flag.clone());
+                } else {
+                    self.bg_worker_b = Some(new_flag.clone());
                 }
+                
+                // Read the FFI FilePath as the Win32 HWND integer
+                let hwnd_val = cue.filepath.as_ptr() as usize;
+                let rx_buffer = if is_deck_a { graphics.webview_rx_a.clone() } else { graphics.webview_rx_b.clone() };
+                crate::webview_capture::spawn_receiver(hwnd_val, rx_buffer, new_flag, graphics.device.clone());
             },
             _ => {
                 println!("M-Playlist [WARNING]: Unhandled Modality {}", cue.modality);
             }
         }
+        
+        // 🚨 CRITICAL: Physically advance the A/B deck state machine
+        self.is_deck_a_active = is_deck_a;
     }
 
     pub fn scrub(&self, target_hnsecs: i64) {
@@ -256,14 +282,21 @@ impl Playlist {
             if progress >= 1.0 {
                 self.is_transitioning = false;
                 
-                if self.is_deck_a_active {
-                    blend_factor.store(0.0_f32.to_bits(), std::sync::atomic::Ordering::Release);
-                    self.deck_b = None; // Drop outgoing deck B
-                } else {
-                    blend_factor.store(1.0_f32.to_bits(), std::sync::atomic::Ordering::Release);
-                    self.deck_a = None; // Drop outgoing deck A
+                if self.transition_duration_hnsecs > 0 {
+                    println!("M-Playlist [LOGIC]: Transition Complete. Outgoing deck VRAM released.");
+                    if self.is_deck_a_active {
+                        blend_factor.store(0.0_f32.to_bits(), std::sync::atomic::Ordering::Release);
+                        self.deck_b = None;
+                        graphics.hardware_flush_b.store(true, std::sync::atomic::Ordering::Release);
+                        if let Some(flag) = self.bg_worker_b.take() { flag.store(false, std::sync::atomic::Ordering::Release); }
+                    } else {
+                        blend_factor.store(1.0_f32.to_bits(), std::sync::atomic::Ordering::Release);
+                        self.deck_a = None;
+                        graphics.hardware_flush_a.store(true, std::sync::atomic::Ordering::Release);
+                        if let Some(flag) = self.bg_worker_a.take() { flag.store(false, std::sync::atomic::Ordering::Release); }
+                    }
+                    self.transition_duration_hnsecs = 0; // 🚨 STATE SEAL: Prevents infinite loop
                 }
-                println!("M-Playlist [LOGIC]: Transition Complete. Outgoing deck VRAM released.");
             }
         }
         

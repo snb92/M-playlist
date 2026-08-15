@@ -198,24 +198,41 @@ impl WasapiEngine {
                                 for i in 0..16 { deck_a_frame[i] = ring_a.pop().unwrap_or(0.0); }
                                 for i in 0..16 { deck_b_frame[i] = ring_b.pop().unwrap_or(0.0); }
 
-                                let mixed_l = (deck_a_frame[0] * (1.0 - blend)) + (deck_b_frame[0] * blend);
-                                let mixed_r = (deck_a_frame[1] * (1.0 - blend)) + (deck_b_frame[1] * blend);
-
                                 if let Some(planar) = planar_opt.as_mut() {
                                     let num_frames = frames_available as usize;
                                     for ch in 0..16 {
-                                        // Planar Layout: Track 1 block, then Track 2 block, etc.
                                         planar[(ch * num_frames) + frame_idx] = deck_a_frame[ch] + deck_b_frame[ch];
                                     }
                                 }
 
-                                chunk[0] = mixed_l * vol;
-                                if chunk[0].abs() > local_max_l { local_max_l = chunk[0].abs(); }
+                                let offset_a = ring_a.routing_offset.load(Ordering::Relaxed) as usize * 2;
+                                let offset_b = ring_b.routing_offset.load(Ordering::Relaxed) as usize * 2;
 
-                                if num_channels > 1 {
-                                    chunk[1] = mixed_r * vol;
-                                    if chunk[1].abs() > local_max_r { local_max_r = chunk[1].abs(); }
+                                for i in 0..num_channels as usize {
+                                    chunk[i] = 0.0;
                                 }
+
+                                let a_l = deck_a_frame[0] * (1.0 - blend) * vol;
+                                let a_r = deck_a_frame[1] * (1.0 - blend) * vol;
+                                let b_l = deck_b_frame[0] * blend * vol;
+                                let b_r = deck_b_frame[1] * blend * vol;
+
+                                if offset_a < num_channels as usize {
+                                    chunk[offset_a] += a_l;
+                                }
+                                if offset_a + 1 < num_channels as usize {
+                                    chunk[offset_a + 1] += a_r;
+                                }
+
+                                if offset_b < num_channels as usize {
+                                    chunk[offset_b] += b_l;
+                                }
+                                if offset_b + 1 < num_channels as usize {
+                                    chunk[offset_b + 1] += b_r;
+                                }
+
+                                if chunk[0].abs() > local_max_l { local_max_l = chunk[0].abs(); }
+                                if num_channels > 1 && chunk[1].abs() > local_max_r { local_max_r = chunk[1].abs(); }
                             }
                         }
 

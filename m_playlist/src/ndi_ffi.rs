@@ -94,6 +94,15 @@ pub type fn_NDIlib_recv_capture_v2 = unsafe extern "C" fn(
 pub type fn_NDIlib_recv_free_video_v2 = unsafe extern "C" fn(p_instance: NDIlib_recv_instance_t, p_video_data: *const NDIlib_video_frame_v2_t);
 pub type fn_NDIlib_recv_destroy = unsafe extern "C" fn(p_instance: NDIlib_recv_instance_t);
 
+#[repr(C)]
+pub struct NDIlib_tally_t {
+    pub on_program: bool,
+    pub on_preview: bool,
+}
+
+pub type fn_NDIlib_recv_set_tally = unsafe extern "C" fn(p_instance: NDIlib_recv_instance_t, p_tally: *const NDIlib_tally_t) -> bool;
+
+
 pub struct NdiLibrary {
     handle: HMODULE,
     pub NDIlib_initialize: fn_NDIlib_initialize,
@@ -106,6 +115,7 @@ pub struct NdiLibrary {
     pub NDIlib_recv_capture_v2: fn_NDIlib_recv_capture_v2,
     pub NDIlib_recv_free_video_v2: fn_NDIlib_recv_free_video_v2,
     pub NDIlib_recv_destroy: fn_NDIlib_recv_destroy,
+    pub NDIlib_recv_set_tally: fn_NDIlib_recv_set_tally,
 }
 
 impl NdiLibrary {
@@ -143,6 +153,7 @@ impl NdiLibrary {
             let recv_capture = get_proc!("NDIlib_recv_capture_v2", fn_NDIlib_recv_capture_v2);
             let recv_free = get_proc!("NDIlib_recv_free_video_v2", fn_NDIlib_recv_free_video_v2);
             let recv_destroy = get_proc!("NDIlib_recv_destroy", fn_NDIlib_recv_destroy);
+            let recv_set_tally = get_proc!("NDIlib_recv_set_tally", fn_NDIlib_recv_set_tally);
 
             Ok(Self {
                 handle,
@@ -156,6 +167,7 @@ impl NdiLibrary {
                 NDIlib_recv_capture_v2: recv_capture,
                 NDIlib_recv_free_video_v2: recv_free,
                 NDIlib_recv_destroy: recv_destroy,
+                NDIlib_recv_set_tally: recv_set_tally,
             })
         }
     }

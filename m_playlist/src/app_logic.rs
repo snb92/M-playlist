@@ -14,6 +14,7 @@ pub struct EngineCue {
     pub out_point_hnsecs: i64,
     pub is_looping: bool,
     pub hold_last_frame: bool,
+    pub audio_routing: u8,
     pub transition_duration_hnsecs: i64,
     pub modality: u8,
     pub hardware_index: u8,
@@ -25,6 +26,7 @@ pub struct OwnedCue {
     pub out_point_hnsecs: i64,
     pub is_looping: u8,
     pub hold_last_frame: u8,
+    pub audio_routing: u8,
     pub transition_duration_hnsecs: i64,
     pub modality: u8,
     pub hardware_index: u8,
@@ -41,6 +43,8 @@ pub enum EngineCommand {
     SetColor { brightness: f32, contrast: f32, saturation: f32 },
     Resize(u32, u32),
     SetVolume(f32),
+    SetBlend(f32),
+    UpdateSubtitle(String),
     Pause,
     Resume,
     Stop,
@@ -228,7 +232,10 @@ impl AppLogic {
                                 println!("M-Playlist [RENDER INFO]: Resized Swapchain to {}x{}", w, h);
                             }
                         }
-                        EngineCommand::Pause => {
+                        EngineCommand::UpdateSubtitle(_s) => {
+                              graphics.subtitle_dirty.store(true, std::sync::atomic::Ordering::Release);
+                          }
+                          EngineCommand::Pause => {
                             clock.is_paused.store(true, std::sync::atomic::Ordering::Release);
                             println!("M-Playlist [LOGIC]: Master Clock Paused.");
                         }
@@ -240,6 +247,13 @@ impl AppLogic {
                             playlist.stop();
                             ring_a.flush();
                             ring_b.flush();
+                        }
+                        EngineCommand::SetBlend(val) => {
+                            // 🚨 STATE SEAL: Ignore manual UI/MIDI crossfader spam if an auto-transition is active
+                            if playlist.transition_duration_hnsecs == 0 {
+                                let u32_val = val.to_bits(); 
+                                blend_factor.store(u32_val, std::sync::atomic::Ordering::Release);
+                            }
                         }
                         EngineCommand::SetVolume(amp) => {
                             audio_engine.master_volume.store(amp.to_bits(), std::sync::atomic::Ordering::Relaxed);

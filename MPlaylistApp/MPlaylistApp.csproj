@@ -15,6 +15,10 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4129.50" />
+  </ItemGroup>
   <Target Name="CopyRustEngine" AfterTargets="Build">
     <!-- Automate the physical transfer of the compiled Rust Native Engine to the C# execution directory -->
     <Copy SourceFiles="..\m_playlist\target\release\m_playlist.dll" DestinationFolder="$(OutDir)" OverwriteReadOnlyFiles="true" SkipUnchangedFiles="false" />

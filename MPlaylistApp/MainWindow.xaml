@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:MPlaylistApp"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         xmlns:primitives="clr-namespace:System.Windows.Controls.Primitives;assembly=PresentationFramework"
         Title="M-Playlist Native Engine (Broadcast Mode)" Height="760" Width="1280" 
         WindowStartupLocation="CenterScreen" 
@@ -22,13 +23,21 @@
             <RowDefinition Height="*"/>    <!-- Main Workspace -->
         </Grid.RowDefinitions>
 
+        <!-- Modality 6: Off-Screen Chromium HTML5 Renderer -->
+        <Canvas Width="0" Height="0" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False">
+            <wv2:WebView2 x:Name="OverlayBrowser" 
+                          Width="1920" Height="1080" 
+                          Canvas.Left="-32000" Canvas.Top="-32000" />
+        </Canvas>
+
         <!-- TOP: Hardware Settings Expander -->
         <Expander Grid.Row="0" Header="[ HARDWARE &amp; NDI CONFIGURATION ]" Foreground="#AAAAAA" BorderBrush="#333" BorderThickness="0,0,0,1" Padding="10">
             <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                 <StackPanel Margin="0,0,30,0">
                     <TextBlock Text="Audio Out:" Foreground="Gray" Margin="0,0,0,5"/>
                     <ComboBox x:Name="AudioDeviceCombo" Width="200" SelectionChanged="AudioDeviceCombo_SelectionChanged"/>
-                </StackPanel>
+                <Button Background="#FF8C00" Click="OnBundleShowClicked" Content="📦 Bundle Show" Foreground="White" Height="40" Margin="10,0,0,0"/>
+                  </StackPanel>
                 
                 <StackPanel Margin="0,0,30,0">
                     <TextBlock FontSize="12" Foreground="#AAAAAA" Text="Hardware Delay: " Margin="0,0,0,5"/>
@@ -180,6 +189,7 @@
                     <Button Background="#333" Click="AddLocalCamera_Click" Content="+ Add Camera" Foreground="White" Height="40" Width="100"/>
                     <Button Background="#333" Click="AddDxgi_Click" Content="+ DXGI" Foreground="White" Height="40" Width="80" Margin="10,0,0,0"/>
                     <Button Background="#333" Click="AddSdi_Click" Content="+ SDI" Foreground="White" Height="40" Width="80" Margin="10,0,0,0"/>
+                    <Button Background="#333" Click="AddHtmlOverlay_Click" Content="+ HTML5 Overlay" Foreground="White" Height="40" Margin="10,0,0,0"/>
                 </StackPanel>
             </Grid>
 
@@ -206,7 +216,7 @@
                         primitives:Thumb.DragCompleted="Timeline_DragCompleted"/>
 
                 <StackPanel Grid.Row="3" Margin="0,15,0,5">
-                    <!-- 🎛️ THE BROADCAST AUDIO DASHBOARD -->
+                    <!-- ðŸŽ›ï¸ THE BROADCAST AUDIO DASHBOARD -->
                     <Border Background="#111" BorderBrush="#333" BorderThickness="1" Padding="15,10" Margin="0,0,0,15">
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -291,13 +301,14 @@
                         </Grid.ColumnDefinitions>
                         
                         <Button Grid.Column="1" Click="OnTestCleanFeedClicked" Content="TEST CLEAN FEED" Background="#444" Foreground="White" FontWeight="Bold" Height="45" Width="130" Margin="0,0,10,0"/>
-                        <Button Grid.Column="2" Click="OnStopClicked" Content="■ STOP" Background="#8B0000" Foreground="White" FontWeight="Bold" Height="45" Width="100" Margin="0,0,10,0"/>
-                        <Button Grid.Column="3" Click="OnPauseClicked" Content="⏸ PAUSE" Background="#333" Foreground="White" FontWeight="Bold" Height="45" Width="100" Margin="0,0,10,0"/>
-                        <Button Grid.Column="4" Click="OnPlayClicked" Content="▶ PLAY / FIRE NEXT" Background="#1E90FF" Foreground="White" FontWeight="Bold" Height="45" Width="180"/>
+                        <Button Grid.Column="2" Click="OnStopClicked" Content="â–  STOP" Background="#8B0000" Foreground="White" FontWeight="Bold" Height="45" Width="100" Margin="0,0,10,0"/>
+                        <Button Grid.Column="3" Click="OnPauseClicked" Content="â¸ PAUSE" Background="#333" Foreground="White" FontWeight="Bold" Height="45" Width="100" Margin="0,0,10,0"/>
+                        <Button Grid.Column="4" Click="OnPlayClicked" Content="â–¶ PLAY / FIRE NEXT" Background="#1E90FF" Foreground="White" FontWeight="Bold" Height="45" Width="180"/>
                     </Grid>
                 </StackPanel>
                 
                 <TextBlock x:Name="StatusText" FontFamily="Consolas" Foreground="#888" HorizontalAlignment="Center" Margin="0,10,0,0"/>
+                  <CheckBox x:Name="ChaseLtcToggle" Content="Chase External Timecode (LTC)" Foreground="#888" HorizontalAlignment="Center" Margin="0,10,0,0" />
             </Grid>
 
             <!-- RIGHT: Cue Inspector -->
@@ -345,6 +356,8 @@
                     
                     <TextBlock Text="Volume (dB)" Foreground="#888" Margin="0,0,0,2"/>
                     <Slider Value="{Binding VolumeDb, UpdateSourceTrigger=PropertyChanged}" Minimum="-60" Maximum="12" TickFrequency="1" IsSnapToTickEnabled="True" Margin="0,0,0,10" ValueChanged="OnVolumeSliderChanged"/>
+                    <Button Content="Normalize Audio (-14 LUFS)" Background="#555" Foreground="White" BorderThickness="0" Padding="5" Margin="0,0,0,10" Click="NormalizeAudio_Click"/>
+                      <Button Content="Hardware Conformity (H.264 / AAC)" Background="#555" Foreground="White" BorderThickness="0" Padding="5" Margin="0,0,0,10" Click="TranscodeVideo_Click"/>
                     
                     <TextBlock Text="Notes" Foreground="#888" Margin="0,0,0,2"/>
                     <TextBox Text="{Binding Notes, UpdateSourceTrigger=PropertyChanged}" Background="#333" Foreground="White" BorderThickness="0" Padding="5" TextWrapping="Wrap" AcceptsReturn="True" Height="80"/>
@@ -353,3 +366,4 @@
         </Grid>
     </Grid>
 </Window>
+

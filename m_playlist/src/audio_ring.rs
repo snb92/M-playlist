@@ -7,6 +7,7 @@ pub struct AudioRingBuffer {
     tail: AtomicUsize,
     capacity: usize,
     pub routing_matrix: [AtomicU32; 256],
+    pub routing_offset: std::sync::atomic::AtomicU8,
 }
 
 impl AudioRingBuffer {
@@ -30,6 +31,7 @@ impl AudioRingBuffer {
             tail: AtomicUsize::new(0),
             capacity,
             routing_matrix: matrix,
+            routing_offset: std::sync::atomic::AtomicU8::new(0),
         }
     }
 

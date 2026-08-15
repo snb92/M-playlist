@@ -63,10 +63,12 @@ namespace MPlaylistApp
         public double VolumeDb { get => _volumeDb; set { _volumeDb = value; OnPropertyChanged(); } }
         public bool IsActivePlaying { get => _isActivePlaying; set { _isActivePlaying = value; OnPropertyChanged(); } }
 
+        private CueModality? _explicitModality;
         public CueModality Modality 
         {
             get 
             {
+                if (_explicitModality.HasValue) return _explicitModality.Value;
                 if (string.IsNullOrEmpty(_filePath)) return CueModality.WMFTemporal;
                 if (_filePath.StartsWith("ndi://", StringComparison.OrdinalIgnoreCase)) return CueModality.NDILive;
                 if (_filePath.StartsWith("webview://", StringComparison.OrdinalIgnoreCase)) return CueModality.WebView2Overlay;
@@ -74,7 +76,10 @@ namespace MPlaylistApp
                 if (ext == ".png" || ext == ".jpg" || ext == ".jpeg") return CueModality.WICStatic;
                 return CueModality.WMFTemporal;
             }
+            set { _explicitModality = value; OnPropertyChanged(); }
         }
+        
+        public uint HardwareIndex { get; set; } = 0;
 
         // FFI mapping compatibility properties
         public long TransitionDurationHnsecs { get => _transitionDurationHnsecs; set { _transitionDurationHnsecs = value; OnPropertyChanged(); } }

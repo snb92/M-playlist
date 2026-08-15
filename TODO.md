@@ -1,83 +1,14 @@
-﻿# Project TODOs
+﻿# M-Playlist Active Tasks
 
-## Initialization
-- [x] Create foundational context document (CONTEXT.md)
-- [x] Create TODO.md and CHANGELOG.md
-- [x] Create Implementation Plan based on architectural blueprint
+- [x] Integrate System.IO.FileSystemWatcher (Automagic File Tracking)
+- [x] Build HyperDeck TCP emulator on Port 9993
+- [x] Win32 P/Invoke MIDI trigger endpoints
+- [x] Dynamic WASAPI Audio Routing (FFI 48-byte clamp)
+- [x] Offline WMF transcode hardware conformity logic
+- [x] Bundle Show Packager via pure C# system copy
+- [x] Art-Net DMX Universe 0 UDP ingestion
+- [x] SMPTE LTC audio timecode decoding via Rust WASAPI capture
+- [x] NDI Tally routing via native FFI C-structs
 
-## Phase 1: Core OS-Native Infrastructure Setup
-- [x] Setup Rust project with C-library output (`.dll` for Windows)
-- [x] Setup `cargo vendor` for necessary FFI crates (`windows-rs`)
-- [x] Implement Wait-Free Ring Buffer using `std::sync::atomic`
-- [x] Implement Master Clock using direct WASAPI bindings
-
-## Phase 2: Secure Media Engine
-- [x] Implement Media Foundation bindings for video demuxing/decoding
-- [x] Implement Dual-Decoder state machine for seamless looping
-
-## Phase 3: Graphics & Memory Pipeline
-- [x] Implement Dx11Compositor with IDXGISwapChain1 bound to physical UI HWND
-- [x] Implement Zero-Copy pipeline (DXGI Surface to DirectX Texture)
-- [x] Hardware Video Processor scaling and YUV to ARGB32 conversion
-
-## Phase 4: App Logic & Interfaces
-- [x] Implement MPSC message-passing architecture
-- [x] Implement Secure OSC UDP server
-
-## Phase 5: Advanced Hardware & Time Manipulation
-- [x] Phase 2: Dynamic Audio Routing & Output Windowing
-- [x] Phase 3: Hardware-Level Trimming & Scrubbing
-- [x] Expose C-FFI for UI interactions
-
-## Phase 5: Native GUI
-- [x] Create WPF project with `HwndHost` for raw uncomposited drawing surface
-- [x] Bridge WPF to Rust Headless Server via C-FFI (`EngineInterop`)
-
-## Master Roadmap: Feature Engine
-### Phase 1: The Brain (Data, State & Ingestion)
-- [x] The Advanced Cue Model (FfiCue struct and EngineCue)
-- [x] Drag-and-Drop Ingestion UI
-- [x] JSON Saving (CueModel and ShowFileService)
-
-### Phase 2: The Venue (Hardware & Output)
-- [ ] Secondary Output Window
-- [ ] Dynamic Audio Routing
-
-### Phase 3: The Time Domain (Physics & Manipulation)
-- [x] Clip Trimming (In / Out Points)
-- [x] Seeking / Scrubbing
-
-### Phase 4: Broadcast Capabilities
-- [x] Crossfades & Shaders (A/B Deck Compositor)
-- [x] NDI Broadcast Output
-  - [ ] Implement format-conversion compute shader before readback (10-bit R10G10B10A2 -> 8-bit BGRA)
-  - [x] Phase 6 Path B: Direct2D Typography & Immutable 1080p Swapchain
-  - [x] Phase 7.1: The Guillotine Latch
-  - [x] Phase 7.2: The Temporal Vacuum
-  - [x] Phase 7.3: Interactive Topology & Thread Safety
-  - [x] Phase 7.4: Operator Topology & Bounds Geometry
-  - [x] Phase 7.5: Visual Fidelity & Scrub Mechanics
-  - [x] Phase 10: Spatial Geometry & GPU Color (Zero-Blocking VRAM Streaming)
-
-  - [x] Phase 11: The Static Asset Pipeline (WIC to DX11 Integration)
-
-  - [x] Phase 11b: Static Asset Polymorphism & C# Routing
-  - [x] Phase 11c: The Pure State Realignment (C-ABI Modality Enforcement)
-
-  - [x] Phase 12: Topological Output & Clean Feed
-  - [x] Phase 13a: OSC State Injection (Move Listener to C# Brain, Expose Public Transport API on EngineConductor)
-  - [x] Phase 14a: NDI Ingestion (Structural Primitive & Receiver FFI)
-  - [x] Phase 14a.2: The Muscle Lobotomy (Eradicate static cues array, pass FfiCue dynamic payload)
-  - [x] Phase 14b: NDI Ingestion (Lock-Free Receiver Thread & VRAM Blasting)
-  - [x] Phase 14b.2: The Transition Lock (Insulate Rust engine from C# lookahead during crossfades)
-  - [x] Phase 14b.3: Polymorphic Unification (Unify asset loading endpoints through mplaylist_load_cue)
-
-- [x] Phase 14c: Local Hardware Ingestion (UVC/Capture Cards)
-
-
-- [x] Phase 14c UI Verification: Add debug button in C# to trigger Modality 5 and verify SDI injection end-to-end.
-- [x] Phase 14d SDK Deployment: Drop the Blackmagic Desktop Video SDK into m_playlist/decklink_sdk to activate the native shim.
-
-- [x] Phase 14e: WebView2 Win32 Overlays (Modality 6)
-- [ ] Phase 14e UI Verification: Create WebView2 instance in WPF and pass IntPtr.Zero to Modality 6 for diagnostics.
-
+## Next Steps
+- Mission complete. Await Architect V2 directive.

@@ -24,6 +24,7 @@ pub struct FfiCue {
     pub out_point_hnsecs: i64,     // 0 = play to end
     pub is_looping: u8,            // u8 used to prevent C# bool ABI alignment issues
     pub hold_last_frame: u8,
+    pub audio_routing: u8,
     pub transition_duration_hnsecs: i64,
     pub modality: u8,
     pub hardware_index: u8,
@@ -134,7 +135,7 @@ pub extern "C" fn mplaylist_load_cue(cue: FfiCue) -> bool {
     let filepath = if cue.filepath.is_null() { String::new() } else { unsafe { std::ffi::CStr::from_ptr(cue.filepath).to_string_lossy().into_owned() } };
     let owned_cue = crate::app_logic::OwnedCue {
         filepath, in_point_hnsecs: cue.in_point_hnsecs, out_point_hnsecs: cue.out_point_hnsecs,
-        is_looping: cue.is_looping, hold_last_frame: cue.hold_last_frame, transition_duration_hnsecs: cue.transition_duration_hnsecs, modality: cue.modality, hardware_index: cue.hardware_index,
+        is_looping: cue.is_looping, hold_last_frame: cue.hold_last_frame, audio_routing: cue.audio_routing, transition_duration_hnsecs: cue.transition_duration_hnsecs, modality: cue.modality, hardware_index: cue.hardware_index,
     };
     if let Ok(state) = get_state().lock() {
         if let Some(logic) = state.app_logic.as_ref() {
@@ -155,6 +156,7 @@ pub extern "C" fn mplaylist_fire_cue(cue: FfiCue) -> bool {
         out_point_hnsecs: cue.out_point_hnsecs,
         is_looping: cue.is_looping,
         hold_last_frame: cue.hold_last_frame,
+        audio_routing: cue.audio_routing,
         transition_duration_hnsecs: cue.transition_duration_hnsecs,
         modality: cue.modality,
         hardware_index: cue.hardware_index,
@@ -443,4 +445,77 @@ pub extern "C" fn mplaylist_bind_output_matrix(hwnd: *mut std::ffi::c_void) -> b
 #[no_mangle]
 pub extern "C" fn mplaylist_check_device_lost() -> bool {
     DEVICE_LOST_FLAG.swap(false, Ordering::Acquire)
+}
+
+#[no_mangle]
+pub extern "C" fn mplaylist_get_camera_device_count() -> i32 {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn mplaylist_get_camera_device_name(_index: i32, _buffer: *mut std::ffi::c_char, _max_len: i32) -> i32 {
+    0 
+}
+
+#[no_mangle]
+pub extern "C" fn mplaylist_update_subtitle(text: *const std::ffi::c_char) {
+    if !text.is_null() {
+        if let Ok(c_str) = unsafe { std::ffi::CStr::from_ptr(text) }.to_str() {
+            if let Some(m) = crate::graphics::SUBTITLE_TEXT.get() {
+                if let Ok(mut lock) = m.lock() {
+                    *lock = c_str.to_string();
+                }
+            }
+            if let Ok(state) = get_state().lock() {
+                if let Some(logic) = state.app_logic.as_ref() {
+                    let _ = logic.tx.send(crate::app_logic::EngineCommand::UpdateSubtitle(c_str.to_string()));
+                }
+            }
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn mplaylist_calculate_lufs(filepath: *const std::ffi::c_char) -> f32 {
+    if filepath.is_null() {
+        return 0.0;
+    }
+    unsafe {
+        let path_str = std::ffi::CStr::from_ptr(filepath).to_string_lossy();
+        match crate::lufs_scanner::calculate_lufs(&path_str) {
+            Ok(offset) => offset,
+            Err(_) => 0.0,
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn mplaylist_transcode_file(in_path: *const std::ffi::c_char, out_path: *const std::ffi::c_char) -> bool {
+    if in_path.is_null() || out_path.is_null() {
+        return false;
+    }
+    unsafe {
+        let in_str = std::ffi::CStr::from_ptr(in_path).to_string_lossy();
+        let out_str = std::ffi::CStr::from_ptr(out_path).to_string_lossy();
+        match crate::transcoder::transcode_file(&in_str, &out_str) {
+            Ok(_) => true,
+            Err(_) => false,
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn mplaylist_get_ltc_timecode() -> u64 {
+    crate::audio_capture::LTC_TIMECODE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[no_mangle]
+pub extern "C" fn mplaylist_set_blend(val: f32) {
+    if let Some(state_mutex) = ENGINE_STATE.get() {
+        if let Ok(state) = state_mutex.lock() {
+            if let Some(logic) = &state.app_logic {
+                let _ = logic.tx.send(crate::app_logic::EngineCommand::SetBlend(val));
+            }
+        }
+    }
 }

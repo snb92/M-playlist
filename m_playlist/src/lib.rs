@@ -1,4 +1,4 @@
-pub mod audio_ring;
+﻿pub mod audio_ring;
 pub mod audio_wasapi;
 pub mod clock;
 pub mod ffi;
@@ -13,6 +13,7 @@ pub mod ndi_ffi;
 pub mod ndi_receiver;
 pub mod desktop_capture;
 pub mod wic;
+pub mod webview_capture;
 
 // --- PHASE 8 & 9 FFI BOUNDARIES ---
 #[no_mangle]
@@ -46,3 +47,10 @@ pub extern "C" fn mplaylist_set_overlay_text(show: bool, text: *const u16) {
     }
 }
 pub mod decklink_capture;
+
+
+pub mod lufs_scanner;
+
+pub mod transcoder;
+
+pub mod audio_capture;

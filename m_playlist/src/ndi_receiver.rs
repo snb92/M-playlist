@@ -30,7 +30,20 @@ pub fn spawn_receiver(uri: String, rx_buffer: Arc<Mutex<NdiPingPong>>, run_flag:
             };
             let mut audio_frame = std::mem::MaybeUninit::uninit();
             
+            
+            let mut last_tally = false;
+            
             while run_flag.load(Ordering::Acquire) {
+                let on_program = rx_buffer.lock().map(|rx| rx.on_program).unwrap_or(false);
+                if on_program != last_tally {
+                    let tally = crate::ndi_ffi::NDIlib_tally_t {
+                        on_program,
+                        on_preview: false,
+                    };
+                    (ndi_ptr.NDIlib_recv_set_tally)(recv_instance, &tally);
+                    last_tally = on_program;
+                }
+
                 let frame_type = (ndi_ptr.NDIlib_recv_capture_v2)(
                     recv_instance, &mut video_frame, audio_frame.as_mut_ptr(), std::ptr::null_mut(), 100,
                 );

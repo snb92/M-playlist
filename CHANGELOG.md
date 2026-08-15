@@ -217,3 +217,16 @@
 ### Added
 - **Phase 14d DeckLink SDI Implementation:** Engineered a zero-copy VRAM handoff for uncompressed SDI ingestion via raw IDeckLink COM API, including a resilient C++ build shim and UYVY Macropixel GPU decode.
 
+# M-Playlist Changelog
+
+## [Phase 17] - Final Thermodynamic Integration
+- **Art-Net DMX Ingestion:** Deployed strict UDP listener on port 6454 for Universe 0, mapping Opacity and Trigger states securely to the WPF dispatcher.
+- **SMPTE LTC Audio Ingestion:** Initialized background WASAPI loopback (eCapture), decoding Bi-phase mark zero-crossings into an 80-bit buffer and exposing an AtomicU64 over the FFI.
+- **NDI Tally Routing:** Implemented NDIlib_tally_t C-struct and mathematically bound the on_program state directly to the temporal crossfader opacity level inside graphics.rs.
+- **System Stability:** Re-sealed all boundaries. The 48-byte FFI lock holds steady, and zero-copy GPU staging remains unbroken. MISSION COMPLETE.
+
+## [Hotfix] - Color Space Linearization & State Phase Repair
+- **scRGB Linearization:** Injected a pow(2.2) sRGB-to-Linear EOTF conversion at the end of the PS_Main Compute Shader (graphics.rs) to mathematically correct DWM's double-gamma blowout on the 10-bit FP16 swapchain.
+- **C# State Phase Repair:** Eradicated raw FFI mplaylist_load_cue and mplaylist_fire_cue calls from the debug ingestion buttons (MainWindow.xaml.cs). Specialized ingestion is now securely routed as dynamic MediaCue injections into the UI _playlist collection, forcing the C# Conductor and Rust Engine to remain perfectly phase-locked.
+- **Thermodynamic State Seal:** Engineered EngineCommand::SetBlend(val) in the Rust pp_logic.rs message loop to strictly discard incoming manual UI/MIDI crossfader spam while a mathematical auto-transition (	ransition_duration_hnsecs == 0) is active.
+
