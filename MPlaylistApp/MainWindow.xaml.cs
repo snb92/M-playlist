@@ -41,6 +41,7 @@ namespace MPlaylistApp
         private ArtNetReceiver? _artNetReceiver;
         private IntPtr _hMidiIn = IntPtr.Zero;
         private MidiInProc? _midiCallback;
+        private DateTime _lastFireTime = DateTime.MinValue;
 
         private float _smoothedVuL = 0;
         private float _smoothedVuR = 0;
@@ -90,18 +91,7 @@ private async void InitializeBrowserOverlayAsync()
             _mediaWatcher.Changed += MediaWatcher_Changed;
             
             _conductor = new EngineConductor();
-            _conductor.OnCueActivated += (cue) => 
-            {
-                Dispatcher.Invoke(() => 
-                {
-                    _activePlayingCue = cue;
-                    int idx = _playlist.IndexOf(cue);
-                    if (idx >= 0) {
-                        PlaylistUI.SelectedIndex = idx;
-                        StatusText.Text = $"Playing Cue #{idx + 1}";
-                    }
-                });
-            };
+            _conductor.OnCueActivated += Conductor_OnCueActivated;
             
             _playlist.CollectionChanged += (s, e) => {
                 _conductor.UpdatePlaylistTopology(_playlist);
@@ -520,39 +510,44 @@ private async void InitializeBrowserOverlayAsync()
 
         private void ExecuteFireNext()
         {
-            if (_playlist == null || _playlist.Count == 0) return;
+            // Debounce Lock: Retained strictly for MIDI hardware double-trigger protection
+            if ((DateTime.Now - _lastFireTime).TotalMilliseconds < 250) return;
+            _lastFireTime = DateTime.Now;
 
-            int nextIndex = 0;
-            if (PlaylistUI.SelectedIndex >= 0) 
-            { 
-                nextIndex = PlaylistUI.SelectedIndex + 1;
-                if (nextIndex >= _playlist.Count) nextIndex = 0;
-            }
-            
-            // 1. Clear previous thermodynamic visual state (Turns off the old red highlight)
-            if (_activePlayingCue != null)
+            // [ARCHITECT PATCH] Strip UI Increment Authority.
+            // The UI no longer calculates N+1 or mutates the DOM manually. 
+            // It merely commands the Conductor to sequence the next cue natively.
+            if (_conductor != null)
             {
-                _activePlayingCue.IsActivePlaying = false;
+                _conductor.TransportFireNext();
             }
+        }
 
-            // 2. Advance the UI DOM Selection
-            PlaylistUI.SelectedIndex = nextIndex;
-            PlaylistUI.ScrollIntoView(PlaylistUI.SelectedItem);
-
-            // 3. Mutate Visual State & Delegate FFI Execution
-            if (PlaylistUI.SelectedItem is MediaCue targetCue)
+        private void Conductor_OnCueActivated(MediaCue newlyActiveCue)
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
             {
-                // Lock onto new cue and trigger the XAML DataTrigger
-                targetCue.IsActivePlaying = true;
-                _activePlayingCue = targetCue;
+                if (newlyActiveCue == null) return;
 
-                // Blast to Rust Engine
-                if (_conductor != null)
+                // 1. Clear previous thermodynamic visual state
+                if (_activePlayingCue != null && _activePlayingCue != newlyActiveCue)
                 {
-                    _conductor.SetActiveCue(targetCue);
-                    _conductor.TransportFireNext();
+                    _activePlayingCue.IsActivePlaying = false;
                 }
-            }
+
+                // 2. Lock onto the new cue resolved by the Logistics Engine
+                newlyActiveCue.IsActivePlaying = true;
+                _activePlayingCue = newlyActiveCue;
+
+                // 3. Sync the UI Selection and Viewport
+                PlaylistUI.SelectedItem = newlyActiveCue;
+                PlaylistUI.ScrollIntoView(newlyActiveCue);
+
+                int idx = _playlist.IndexOf(newlyActiveCue);
+                if (idx >= 0) {
+                    StatusText.Text = $"Playing Cue #{idx + 1}";
+                }
+            }));
         }
 
         private void PlayFireNext_Click(object sender, RoutedEventArgs e)

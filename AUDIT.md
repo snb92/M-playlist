@@ -338,3 +338,21 @@ This file contains a timestamped log of all findings, decisions, validations, an
 - **FINDING / DECISION:** The A/B deck state machine suffered from a double-toggle paradox !(!State) == State because is_deck_a_active was prematurely flipped inside ire_cue while the true, mathematically synced hardware flip occurred in 	ick() after VRAM spin-up.
 - **IMPACT:** The crossfader was permanently polling the outgoing video, causing the engine to load subsequent videos into the exact same deck.
 - **RESOLUTION:** Executed patch_firecue.py to physically eradicate the premature toggle from ire_cue(), restoring 	ick() as the sole arbiter of the state flip. Recompiled Rust and C# layers successfully.
+
+### [2026-08-18] OVERRIDE 7: C# Thermodynamic Debounce
+- **FINDING / DECISION:** C# execution path required a strict 250ms debounce lock to prevent modulo 5 double-triggers from ghost events.
+- **IMPACT:** Prevents the Macro-State Brain (WPF frontend) from spamming the ExecuteFireNext() execution block during ghost UI/MIDI triggers, maintaining system stability and +1 increment tracking.
+- **RESOLUTION:** Injected _lastFireTime lock into MainWindow.xaml.cs and successfully rebuilt the C# pipeline.
+
+
+### [2026-08-18] OVERRIDE 8: Strip UI Increment Authority
+- **FINDING / DECISION:** UI dual-increment collision mathematically stripped. ExecuteFireNext() acts strictly as a command passthrough to the Logistics Engine. Conductor_OnCueActivated acts as the sole visual state resolver.
+- **IMPACT:** Resolves +2 skip bug entirely. Ensures the C# UI DOM only mutates asynchronously as a physical reaction to the Engine executing a cue, strictly segregating execution authority from visual state.
+- **RESOLUTION:** Removed manual indexing logic from ExecuteFireNext() and bound PlaylistUI.SelectedItem updates directly to the _conductor.OnCueActivated delegate. System rebuilt cleanly.
+
+
+### [2026-08-18] OVERRIDE 9: Bootstrap Logistics Engine
+- **FINDING / DECISION:** Removing explicit indexing from the UI exposed a Null Execution Collapse, where EngineConductor failed to execute if _activeCue was null. We implemented a Native Cold-Start Bootstrap in ResolveNextCue().
+- **IMPACT:** Resolves the cold-start failure by defaulting to index 0 when _activeCue is null. The Logistics Engine is now fully self-sufficient and capable of autonomous sequencing from a completely cold matrix.
+- **RESOLUTION:** Injected cold-start logic into EngineConductor.cs, bypassing the null check if the playlist is populated. System successfully rebuilt.
+

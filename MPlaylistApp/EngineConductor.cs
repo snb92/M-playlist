@@ -235,7 +235,17 @@ namespace MPlaylistApp
         private void ResolveNextCue()
         {
             _nextCue = null;
-            if (_activeCue == null) return;
+
+            // [ARCHITECT PATCH] Native Cold-Start Bootstrap
+            // If the matrix is cold (no active cue), auto-lock to the first available cue.
+            if (_activeCue == null) 
+            {
+                if (_playlistOrder != null && _playlistOrder.Count > 0)
+                {
+                    _nextCue = _playlistOrder[0];
+                }
+                return;
+            }
 
             if (_activeCue.EndBehavior == EndBehavior.GotoTarget && !string.IsNullOrEmpty(_activeCue.TargetCueID))
             {
