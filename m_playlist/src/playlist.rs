@@ -76,7 +76,7 @@ impl Playlist {
         };
         let cue = &engine_cue;
 
-        let is_static = cue.modality == 1 || cue.modality == 2 || cue.modality == 4 || cue.modality == 6;
+        let _is_static = cue.modality == 1 || cue.modality == 2 || cue.modality == 4 || cue.modality == 6;
         let transition_ms = target_cue.transition_duration_hnsecs / 10000;
 
         let has_active_deck = self.deck_a.is_some() || self.deck_b.is_some() || blend_factor.load(std::sync::atomic::Ordering::Acquire) != 0; 
@@ -99,6 +99,7 @@ impl Playlist {
             if let Some(flag) = self.bg_worker_a.take() { flag.store(false, std::sync::atomic::Ordering::Release); }
         } else {
             graphics.hardware_flush_b.store(true, std::sync::atomic::Ordering::Release);
+            // [ARCHITECT PATCH] - Restore Deck B Modality Sync & Thermodynamic Thread Cleanup
             graphics.modality_b.store(cue.modality, std::sync::atomic::Ordering::Release);
             if let Some(flag) = self.bg_worker_b.take() { flag.store(false, std::sync::atomic::Ordering::Release); }
         }
@@ -206,9 +207,7 @@ impl Playlist {
                 println!("M-Playlist [WARNING]: Unhandled Modality {}", cue.modality);
             }
         }
-        
-        // 🚨 CRITICAL: Physically advance the A/B deck state machine
-        self.is_deck_a_active = is_deck_a;
+
     }
 
     pub fn scrub(&self, target_hnsecs: i64) {

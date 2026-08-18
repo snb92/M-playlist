@@ -1,12 +1,11 @@
-﻿use windows::core::{ComInterface, Result, PCWSTR};
-use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED, CoUninitialize};
+﻿use windows::core::{Result, PCWSTR};
+use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 use windows::Win32::Media::MediaFoundation::{
     MFCreateSourceReaderFromURL, IMFSourceReader,
     MFCreateAttributes, IMFAttributes,
     MFCreateMediaType, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE,
     MFMediaType_Audio, MF_SOURCE_READER_FIRST_AUDIO_STREAM,
-    MF_SOURCE_READERF_ENDOFSTREAM, MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING,
-    MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, MFAudioFormat_Float
+    MF_SOURCE_READERF_ENDOFSTREAM, MFAudioFormat_Float
 };
 
 pub fn calculate_lufs(filepath: &str) -> Result<f32> {

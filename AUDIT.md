@@ -323,3 +323,18 @@ This file contains a timestamped log of all findings, decisions, validations, an
 **FINDING / DECISION:** The cargo build failed due to the .cargo/config.toml file enforcing a vendor-only policy while the 'cc' crate was unvendored.
 **IMPACT:** The native Rust engine could not build the resilient SDI C++ shim.
 **RESOLUTION:** Temporarily disabled .cargo/config.toml to allow network fetch. Build pipeline restored.
+
+- **[2026-08-15 23:19:50] FINDING / DECISION:** Diagnosed the silent typist failure in applying Regex patches to playlist.rs and graphics.rs. The previous script logic matched an already patched file or bypassed the cargo build due to file timestamping/caching.
+  - **IMPACT:** A/B state toggle failure in deck crossfade and SDR colors appearing washed out due to linear scRGB FP16 mismatch.
+  - **RESOLUTION:** Enforced timestamp update via PowerShell and successfully recompiled Rust engine (cargo build --release in 3.41s) to ensure the thermodynamic changes (is_deck_a_active toggle and pow(2.2) EOTF curve) are properly compiled into m_playlist.dll.
+
+
+- **[2026-08-16 00:18:00] FINDING / DECISION:** Implemented C# Auto-Play Selection for FireNext button.
+  - **IMPACT:** The macro-state UI can now automatically step down the playlist index and properly trigger the conductor's FireNext logic, ensuring sequential playback continuity and proper state machine flipping.
+  - **RESOLUTION:** Adapted OnPlayClicked in MainWindow.xaml.cs to advance the PlaylistUI.SelectedIndex and invoke TransportJumpToCue. dotnet build completed in 5.55s.
+
+
+## 2026-08-16 00:33:00 - Phase Repair: Eradication of Thermodynamic Double-Toggle
+- **FINDING / DECISION:** The A/B deck state machine suffered from a double-toggle paradox !(!State) == State because is_deck_a_active was prematurely flipped inside ire_cue while the true, mathematically synced hardware flip occurred in 	ick() after VRAM spin-up.
+- **IMPACT:** The crossfader was permanently polling the outgoing video, causing the engine to load subsequent videos into the exact same deck.
+- **RESOLUTION:** Executed patch_firecue.py to physically eradicate the premature toggle from ire_cue(), restoring 	ick() as the sole arbiter of the state flip. Recompiled Rust and C# layers successfully.

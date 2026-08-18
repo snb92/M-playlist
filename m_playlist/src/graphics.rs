@@ -1,4 +1,4 @@
-﻿use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, AtomicBool};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, AtomicBool};
 use std::sync::{Mutex, mpsc::SyncSender, RwLock};
 use crate::ffi::DEVICE_LOST_FLAG;
 
@@ -87,63 +87,65 @@ cbuffer BlendBuffer : register(b0) {
     float is_overlay_a; float is_overlay_b; float pad1; float pad2;
 };
 
-float4 PS_Main(PS_INPUT input) : SV_TARGET {
-    float2 uv = input.uv;
-    uv -= float2(0.5, 0.5);
-    uv /= (zoom == 0.0 ? 1.0 : zoom);
-    uv += float2(0.5, 0.5);
-    uv -= float2(panX, -panY);
 
-    float3 warped = mul(invHomography, float3(uv, 1.0));
-    float2 final_uv = warped.xy / warped.z;
+// [ARCHITECT PATCH] - Target 3: Absolute VRAM Geometry Correction
+// This completely ignores arbitrary padding and calculates 
+// native letterbox/pillarbox bounds using the strict cbuffer aspect ratios.
+float2 get_letterbox_uv(float2 uv, float aspect_in, float aspect_out) {
+    if (aspect_in <= 0.001 || aspect_out <= 0.001) return uv; // Safety fallback
 
-    float2 uvA = final_uv;
-    float2 uvB = final_uv;
-    if (aspectA > aspectOut) { uvA.y = (uvA.y - 0.5) * (aspectOut / aspectA) + 0.5; } 
-    else { uvA.x = (uvA.x - 0.5) * (aspectA / aspectOut) + 0.5; }
+    float2 scaled_uv = uv;
+    if (aspect_in > aspect_out) {
+        // Source is wider than output (e.g. 21:9 Ultrawide in 16:9 matrix) -> LETTERBOX
+        float scale = aspect_in / aspect_out;
+        scaled_uv.y = (uv.y - 0.5) * scale + 0.5;
+    } else {
+        // Source is taller than output (e.g. 9:16 Vertical in 16:9 matrix) -> PILLARBOX
+        float scale = aspect_out / aspect_in;
+        scaled_uv.x = (uv.x - 0.5) * scale + 0.5;
+    }
     
-    if (aspectB > aspectOut) { uvB.y = (uvB.y - 0.5) * (aspectOut / aspectB) + 0.5; } 
-    else { uvB.x = (uvB.x - 0.5) * (aspectB / aspectOut) + 0.5; }
+    return scaled_uv;
+}
 
-    float4 colorA = texA.Sample(smp, uvA);
-    float4 colorB = texB.Sample(smp, uvB);
+float4 PS_Main(PS_INPUT input) : SV_TARGET {
+      // [ARCHITECT PATCH] Aspect-Aware VRAM Scaling
+      float2 uvA = get_letterbox_uv(input.uv, aspectA, aspectOut);
+      // Absolute Black Clamp (Prevents texture wrap/smear outside the active video bounds)
+      float4 colorA = (uvA.x < 0.0 || uvA.x > 1.0 || uvA.y < 0.0 || uvA.y > 1.0) ? float4(0, 0, 0, 0) : texA.Sample(smp, uvA);
 
-    if (uvA.x < cropLeft || uvA.x > (1.0 - cropRight) || uvA.y < cropTop || uvA.y > (1.0 - cropBottom)) colorA = float4(0,0,0,0);
-    if (uvB.x < cropLeft || uvB.x > (1.0 - cropRight) || uvB.y < cropTop || uvB.y > (1.0 - cropBottom)) colorB = float4(0,0,0,0);
+      float2 uvB = get_letterbox_uv(input.uv, aspectB, aspectOut);
+      float4 colorB = (uvB.x < 0.0 || uvB.x > 1.0 || uvB.y < 0.0 || uvB.y > 1.0) ? float4(0, 0, 0, 0) : texB.Sample(smp, uvB);
 
     float4 finalColor;
-
     if (is_overlay_b > 0.5) {
-        // OVER Operator: Deck B is Premultiplied HTML (Foreground)
         float4 fg = colorB * blendFactor;
         finalColor.rgb = fg.rgb + (colorA.rgb * (1.0 - fg.a));
         finalColor.a = fg.a + (colorA.a * (1.0 - fg.a));
-    } 
-    else if (is_overlay_a > 0.5) {
-        // OVER Operator: Deck A is Premultiplied HTML (Foreground)
+    } else if (is_overlay_a > 0.5) {
         float alphaA = 1.0 - blendFactor;
         float4 fg = colorA * alphaA;
         finalColor.rgb = fg.rgb + (colorB.rgb * (1.0 - fg.a));
         finalColor.a = fg.a + (colorB.a * (1.0 - fg.a));
-    }
-    else {
-        // Standard Video Temporal Crossfade
+    } else {
         finalColor = lerp(colorA, colorB, blendFactor);
     }
 
-    // Neutral Color Grading (0.0 = no change)
+    // Color Grading
     finalColor.rgb *= (brightness + 1.0);
     finalColor.rgb = (finalColor.rgb - 0.5) * (contrast + 1.0) + 0.5;
-    
     float luminance = dot(finalColor.rgb, float3(0.2126, 0.7152, 0.0722));
     finalColor.rgb = lerp(float3(luminance, luminance, luminance), finalColor.rgb, saturation + 1.0);
 
-    // Output HDR buffer clamped to SDR monitor
-        // Convert Gamma-encoded BT.709 to Linear scRGB for the FP16 Swapchain
-    finalColor.rgb = pow(abs(finalColor.rgb), 2.2);
+    // Subtitle Compositing
+    float4 subColor = texSub.Sample(smp, input.uv);
+    finalColor.rgb = subColor.rgb + (finalColor.rgb * (1.0 - subColor.a));
 
-    // Output HDR buffer clamped to SDR monitor
-    return float4(saturate(finalColor.rgb), finalColor.a);
+    // [ARCHITECT PATCH] Native SDR Unmanaged Pipeline: Removed stale pow(2.2) linearization
+    // The DXGI_FORMAT_B8G8R8A8_UNORM swapchain correctly maps linear SDR to DWM.
+    // Direct passthrough enforces absolute 0-255 RGB thermodynamic levels.
+    
+    return finalColor;
 }
 "#;
 
@@ -1020,7 +1022,7 @@ impl Dx11Compositor {
 
                             let uav_desc = D3D11_TEXTURE2D_DESC {
                                 Width: desc.Width, Height: desc.Height, MipLevels: 1, ArraySize: 1,
-                                Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R16G16B16A16_FLOAT, // 16-Bit Guaranteed Hardware UAV Support
+                                Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM, // 16-Bit Guaranteed Hardware UAV Support
                                 SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
                                 Usage: windows::Win32::Graphics::Direct3D11::D3D11_USAGE_DEFAULT,
                                 BindFlags: windows::Win32::Graphics::Direct3D11::D3D11_BIND_UNORDERED_ACCESS.0 as u32 | windows::Win32::Graphics::Direct3D11::D3D11_BIND_SHADER_RESOURCE.0 as u32,
@@ -1252,7 +1254,7 @@ impl Dx11Compositor {
                             if need_comp_realloc {
                                 let uav_desc = D3D11_TEXTURE2D_DESC {
                                     Width: extracted.width, Height: extracted.height, MipLevels: 1, ArraySize: 1,
-                                    Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R16G16B16A16_FLOAT,
+                                    Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
                                     SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
                                     Usage: windows::Win32::Graphics::Direct3D11::D3D11_USAGE_DEFAULT,
                                     BindFlags: windows::Win32::Graphics::Direct3D11::D3D11_BIND_UNORDERED_ACCESS.0 as u32 | windows::Win32::Graphics::Direct3D11::D3D11_BIND_SHADER_RESOURCE.0 as u32,
@@ -1269,7 +1271,7 @@ impl Dx11Compositor {
 
                                 *comp_lock = Some(ComputeStaging {
                                     planar_tex: stg_tex.clone(), uav_tex, uav_view: uav_view_opt.unwrap(), srv_view: srv_view_opt.unwrap(),
-                                    width: extracted.width, height: extracted.height, format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R16G16B16A16_FLOAT.0 as u32,
+                                    width: extracted.width, height: extracted.height, format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM.0 as u32,
                                 });
                             }
                             
@@ -1347,7 +1349,7 @@ impl Dx11Compositor {
 
             // 3. The Clean Feed NDI Tap
             let frame = self.frame_count.load(Ordering::Relaxed);
-            let mut ndi_staging_lock = self.ndi_staging_textures.lock().unwrap();
+            let ndi_staging_lock = self.ndi_staging_textures.lock().unwrap();
             let mut index_lock = self.ndi_staging_index.lock().unwrap();
             let current_index = *index_lock;
             let tx_opt = self.ndi_tx.lock().unwrap();
@@ -1377,7 +1379,7 @@ impl Dx11Compositor {
                         let total_bytes = (mapped_subresource.RowPitch * current_h) as usize;
                         
                         let mut buffer = {
-                            let mut rx_lock = self.video_grave_rx.lock().unwrap();
+                            let rx_lock = self.video_grave_rx.lock().unwrap();
                             if let Some(rx) = rx_lock.as_ref() {
                                 rx.try_recv().unwrap_or_else(|_| Vec::with_capacity(total_bytes))
                             } else {
@@ -1465,6 +1467,7 @@ impl Dx11Compositor {
         Ok(())
     }
 }
+
 
 
 

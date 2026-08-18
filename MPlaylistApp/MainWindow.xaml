@@ -303,7 +303,7 @@
                         <Button Grid.Column="1" Click="OnTestCleanFeedClicked" Content="TEST CLEAN FEED" Background="#444" Foreground="White" FontWeight="Bold" Height="45" Width="130" Margin="0,0,10,0"/>
                         <Button Grid.Column="2" Click="OnStopClicked" Content="â–  STOP" Background="#8B0000" Foreground="White" FontWeight="Bold" Height="45" Width="100" Margin="0,0,10,0"/>
                         <Button Grid.Column="3" Click="OnPauseClicked" Content="â¸ PAUSE" Background="#333" Foreground="White" FontWeight="Bold" Height="45" Width="100" Margin="0,0,10,0"/>
-                        <Button Grid.Column="4" Click="OnPlayClicked" Content="â–¶ PLAY / FIRE NEXT" Background="#1E90FF" Foreground="White" FontWeight="Bold" Height="45" Width="180"/>
+                        <Button Grid.Column="4" Click="PlayFireNext_Click" Content="â–¶ PLAY / FIRE NEXT" Background="#1E90FF" Foreground="White" FontWeight="Bold" Height="45" Width="180"/>
                     </Grid>
                 </StackPanel>
                 

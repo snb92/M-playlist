@@ -1,4 +1,4 @@
-﻿use windows::core::{Result, PCWSTR, GUID, ComInterface};
+﻿use windows::core::{Result, PCWSTR};
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 use windows::Win32::Media::MediaFoundation::{
     MFCreateSourceReaderFromURL, IMFSourceReader,

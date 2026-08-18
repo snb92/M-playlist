@@ -1,16 +1,14 @@
 ﻿use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
-use windows::core::{ComInterface, Result};
+use windows::core::Result;
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 use windows::Win32::Media::Audio::{
     eCapture, eConsole, IMMDeviceEnumerator, MMDeviceEnumerator,
     IAudioClient, IAudioCaptureClient, WAVEFORMATEX,
-    AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_NOPERSIST,
-    AUDCLNT_STREAMFLAGS_LOOPBACK, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
+    AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_NOPERSIST, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
 };
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject, INFINITE};
-use windows::Win32::Foundation::{HANDLE, S_OK};
 
 pub static LTC_TIMECODE: AtomicU64 = AtomicU64::new(0);
 

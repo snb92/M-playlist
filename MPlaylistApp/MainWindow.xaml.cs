@@ -518,28 +518,46 @@ private async void InitializeBrowserOverlayAsync()
             _playlist.Add(sdiCue);
         }
 
-        private void OnPlayClicked(object sender, RoutedEventArgs e)
+        private void ExecuteFireNext()
         {
-            if (_isPaused && _activePlayingCue != null)
+            if (_playlist == null || _playlist.Count == 0) return;
+
+            int nextIndex = 0;
+            if (PlaylistUI.SelectedIndex >= 0) 
+            { 
+                nextIndex = PlaylistUI.SelectedIndex + 1;
+                if (nextIndex >= _playlist.Count) nextIndex = 0;
+            }
+            
+            // 1. Clear previous thermodynamic visual state (Turns off the old red highlight)
+            if (_activePlayingCue != null)
             {
-                _conductor.TransportPlay();
-                _isPaused = false;
-                StatusText.Text = $"Resumed: {_activePlayingCue.Title}";
-                return;
+                _activePlayingCue.IsActivePlaying = false;
             }
 
-            if (PlaylistUI.SelectedIndex >= 0)
-            {
-                _conductor.TransportJumpToCue(PlaylistUI.SelectedIndex);
-                PlaylistUI.SelectedItem = null; // Clear selection to restore sequential firing
-                _isPaused = false;
-                StatusText.Text = "Forced Cue Jump";
-                return;
-            }
+            // 2. Advance the UI DOM Selection
+            PlaylistUI.SelectedIndex = nextIndex;
+            PlaylistUI.ScrollIntoView(PlaylistUI.SelectedItem);
 
-            _conductor.TransportFireNext();
-            _isPaused = false;
-            StatusText.Text = "Fired Next Cue";
+            // 3. Mutate Visual State & Delegate FFI Execution
+            if (PlaylistUI.SelectedItem is MediaCue targetCue)
+            {
+                // Lock onto new cue and trigger the XAML DataTrigger
+                targetCue.IsActivePlaying = true;
+                _activePlayingCue = targetCue;
+
+                // Blast to Rust Engine
+                if (_conductor != null)
+                {
+                    _conductor.SetActiveCue(targetCue);
+                    _conductor.TransportFireNext();
+                }
+            }
+        }
+
+        private void PlayFireNext_Click(object sender, RoutedEventArgs e)
+        {
+            ExecuteFireNext();
         }
 
         private void OnPauseClicked(object sender, RoutedEventArgs e)
@@ -876,9 +894,10 @@ private async void InitializeBrowserOverlayAsync()
                 {
                     if (data2 > 0)
                     {
+                        // [ARCHITECT PATCH] Hardware triggers MUST advance the UI properly!
                         Dispatcher.BeginInvoke(new Action(() => 
                         {
-                            if (_conductor != null) _conductor.TransportFireNext();
+                            ExecuteFireNext();
                         }));
                     }
                 }
